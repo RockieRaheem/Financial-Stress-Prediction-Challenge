@@ -37,3 +37,12 @@ uv run python src/train_baseline.py
 ```
 
 The script records out-of-fold Log Loss and ROC-AUC in `artifacts/baseline_metrics.json` and writes the validated test predictions to `submissions/catboost_baseline.csv`.
+
+## Temporal-feature model
+
+Train the model with six-month behavioral aggregates, trends, and liquidity ratios:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/train_featured.py
+```
