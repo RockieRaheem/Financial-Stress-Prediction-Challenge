@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize, minimize_scalar
+from scipy.optimize import minimize
 from scipy.special import expit, logit
 from sklearn.metrics import log_loss, roc_auc_score
 
@@ -22,8 +22,9 @@ def clipped_logit(values: np.ndarray) -> np.ndarray:
     return logit(np.clip(values, 1e-6, 1 - 1e-6))
 
 
-def blend(first: np.ndarray, second: np.ndarray, second_weight: float) -> np.ndarray:
-    return expit((1.0 - second_weight) * clipped_logit(first) + second_weight * clipped_logit(second))
+def blend(predictions: list[np.ndarray], weights: np.ndarray) -> np.ndarray:
+    logits = np.column_stack([clipped_logit(values) for values in predictions])
+    return expit(logits @ weights)
 
 
 def calibrate(values: np.ndarray, scale: float, intercept: float) -> np.ndarray:
@@ -32,22 +33,32 @@ def calibrate(values: np.ndarray, scale: float, intercept: float) -> np.ndarray:
 
 def main() -> None:
     cat_oof = pd.read_csv(ARTIFACT_DIR / "featured_oof.csv")
-    lgb_oof = pd.read_csv(ARTIFACT_DIR / "lightgbm_oof.csv")
+    xgb_oof = pd.read_csv(ARTIFACT_DIR / "xgboost_oof.csv")
+    pruned_oof = pd.read_csv(ARTIFACT_DIR / "lightgbm_pruned_oof.csv")
     cat_test = pd.read_csv(SUBMISSION_DIR / "catboost_temporal.csv")
-    lgb_test = pd.read_csv(SUBMISSION_DIR / "lightgbm_temporal.csv")
-    assert cat_oof["ID"].tolist() == lgb_oof["ID"].tolist()
-    assert cat_test["ID"].tolist() == lgb_test["ID"].tolist()
+    xgb_test = pd.read_csv(SUBMISSION_DIR / "xgboost_temporal.csv")
+    pruned_test = pd.read_csv(SUBMISSION_DIR / "lightgbm_pruned_150.csv")
+    assert cat_oof["ID"].tolist() == xgb_oof["ID"].tolist() == pruned_oof["ID"].tolist()
+    assert cat_test["ID"].tolist() == xgb_test["ID"].tolist() == pruned_test["ID"].tolist()
 
     y = cat_oof[TARGET].to_numpy()
-    cat_predictions = cat_oof["prediction"].to_numpy()
-    lgb_predictions = lgb_oof["prediction"].to_numpy()
-    weight_result = minimize_scalar(
-        lambda weight: log_loss(y, blend(cat_predictions, lgb_predictions, float(weight))),
-        bounds=(0.0, 1.0),
-        method="bounded",
+    oof_predictions = [
+        cat_oof["prediction"].to_numpy(),
+        xgb_oof["prediction"].to_numpy(),
+        pruned_oof["prediction"].to_numpy(),
+    ]
+    weight_result = minimize(
+        lambda weights: log_loss(y, blend(oof_predictions, weights)),
+        x0=np.full(3, 1 / 3),
+        method="SLSQP",
+        bounds=[(0.0, 1.0)] * 3,
+        constraints={"type": "eq", "fun": lambda weights: weights.sum() - 1.0},
+        options={"ftol": 1e-12, "maxiter": 1_000},
     )
-    weight = float(weight_result.x)
-    blended_oof = blend(cat_predictions, lgb_predictions, weight)
+    if not weight_result.success:
+        raise RuntimeError(f"Weight optimization failed: {weight_result.message}")
+    weights = weight_result.x
+    blended_oof = blend(oof_predictions, weights)
     calibration_result = minimize(
         lambda parameters: log_loss(
             y, calibrate(blended_oof, float(parameters[0]), float(parameters[1]))
@@ -61,7 +72,12 @@ def main() -> None:
     calibrated_oof = calibrate(blended_oof, scale, intercept)
 
     blended_test = blend(
-        cat_test["Target"].to_numpy(), lgb_test["Target"].to_numpy(), weight
+        [
+            cat_test["Target"].to_numpy(),
+            xgb_test["Target"].to_numpy(),
+            pruned_test["Target"].to_numpy(),
+        ],
+        weights,
     )
     test_predictions = calibrate(blended_test, scale, intercept)
     submission = cat_test.copy()
@@ -70,19 +86,20 @@ def main() -> None:
     assert not submission.isna().any().any()
 
     metrics = {
-        "lightgbm_weight": weight,
-        "catboost_weight": 1.0 - weight,
+        "catboost_weight": float(weights[0]),
+        "xgboost_weight": float(weights[1]),
+        "pruned_lightgbm_weight": float(weights[2]),
         "calibration_scale": scale,
         "calibration_intercept": intercept,
         "oof_log_loss": float(log_loss(y, calibrated_oof)),
         "oof_roc_auc": float(roc_auc_score(y, calibrated_oof)),
     }
-    submission.to_csv(SUBMISSION_DIR / "catboost_lightgbm_ensemble.csv", index=False)
+    submission.to_csv(SUBMISSION_DIR / "pruned_multimodel_ensemble.csv", index=False)
     (ARTIFACT_DIR / "ensemble_metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
     print(json.dumps(metrics, indent=2))
-    print("Saved submissions/catboost_lightgbm_ensemble.csv")
+    print("Saved submissions/pruned_multimodel_ensemble.csv")
 
 
 if __name__ == "__main__":

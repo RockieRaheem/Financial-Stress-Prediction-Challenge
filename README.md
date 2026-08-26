@@ -61,7 +61,7 @@ $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python src/train_lightgbm.py
 ```
 
-Optimize and generate the calibrated CatBoost-LightGBM ensemble with:
+Optimize and generate the calibrated CatBoost-XGBoost-pruned-LightGBM ensemble with:
 
 ```powershell
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
