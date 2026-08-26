@@ -20,6 +20,13 @@ uv run python src/audit_data.py
 
 Audit results are written to `artifacts/data_audit.json`. Competition data and generated submissions should not be committed or shared outside the registered team.
 
+Run the target-signal and train/test-shift analysis with:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/analyze_signals.py
+```
+
 ## Baseline model
 
 Run the fixed-seed, three-fold CatBoost baseline with:
