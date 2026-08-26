@@ -81,3 +81,10 @@ Screen importance-pruned LightGBM feature budgets with:
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python src/screen_feature_counts.py
 ```
+
+Train the selected 150-feature LightGBM model across five folds with:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/train_lightgbm_pruned.py
+```
