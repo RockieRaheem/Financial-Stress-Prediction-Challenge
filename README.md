@@ -46,3 +46,10 @@ Train the model with six-month behavioral aggregates, trends, and liquidity rati
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python src/train_featured.py
 ```
+
+Calibrate its probabilities from out-of-fold predictions with:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/calibrate_predictions.py
+```
