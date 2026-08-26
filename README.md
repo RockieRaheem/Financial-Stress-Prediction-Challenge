@@ -74,3 +74,10 @@ Train the independent XGBoost temporal model with:
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python src/train_xgboost.py
 ```
+
+Screen importance-pruned LightGBM feature budgets with:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/screen_feature_counts.py
+```
