@@ -95,3 +95,10 @@ Train five-fold LightGBM with log-scale financial-stress features with:
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python src/train_lightgbm_logstress.py
 ```
+
+Train the selected 300-feature log-stress model across five folds with:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/train_lightgbm_logstress_pruned.py
+```
