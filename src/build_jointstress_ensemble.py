@@ -27,6 +27,10 @@ MODEL_FILES = {
         ARTIFACT_DIR / "catboost_jointstress_pruned_oof.csv",
         SUBMISSION_DIR / "catboost_jointstress_pruned_100.csv",
     ),
+    "catboost_jointstress_depth6": (
+        ARTIFACT_DIR / "catboost_jointstress_depth6_oof.csv",
+        SUBMISSION_DIR / "catboost_jointstress_depth6_100.csv",
+    ),
     "lightgbm_jointstress_pruned": (
         ARTIFACT_DIR / "lightgbm_jointstress_pruned_oof.csv",
         SUBMISSION_DIR / "lightgbm_jointstress_pruned_100.csv",
