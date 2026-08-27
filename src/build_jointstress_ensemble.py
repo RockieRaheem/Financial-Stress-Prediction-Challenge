@@ -169,6 +169,30 @@ def shift_to_mean(calibrated_logits: np.ndarray, target_mean: float) -> tuple[np
     return expit(calibrated_logits + intercept_shift), intercept_shift
 
 
+def shift_positions_to_mean(
+    predictions: np.ndarray, position_count: int, target_mean: float
+) -> tuple[np.ndarray, list[float]]:
+    """Shift each repeated snapshot position to the observed class prevalence."""
+    logits = clipped_logit(predictions)
+    positions = np.arange(len(predictions)) % position_count
+    shifted = np.zeros(len(predictions))
+    shifts = []
+    for position in range(position_count):
+        mask = positions == position
+        position_shift = float(
+            brentq(
+                lambda shift: float(
+                    expit(logits[mask] + shift).mean() - target_mean
+                ),
+                -20.0,
+                20.0,
+            )
+        )
+        shifted[mask] = expit(logits[mask] + position_shift)
+        shifts.append(position_shift)
+    return shifted, shifts
+
+
 def main() -> None:
     oof_frames = {name: pd.read_csv(paths[0]) for name, paths in MODEL_FILES.items()}
     test_frames = {name: pd.read_csv(paths[1]) for name, paths in MODEL_FILES.items()}
@@ -239,6 +263,12 @@ def main() -> None:
     mean_test, mean_shift = shift_to_mean(
         calibrated_test_logits, EXPECTED_PREVALENCE
     )
+    nested_position_mean, _ = shift_positions_to_mean(
+        nested_mean, 4, EXPECTED_PREVALENCE
+    )
+    position_mean_test, position_mean_shifts = shift_positions_to_mean(
+        mean_test, 3, EXPECTED_PREVALENCE
+    )
     logit_parameters = optimize_logit_parameters(labels, oof_matrix)
     logit_oof, _ = apply_logit_blend(oof_matrix, logit_parameters)
     logit_test, logit_test_eta = apply_logit_blend(test_matrix, logit_parameters)
@@ -260,6 +290,9 @@ def main() -> None:
         "nested_raw": competition_metrics(labels, nested_raw),
         "nested_quartic": competition_metrics(labels, nested_quartic),
         "nested_quartic_mean015": competition_metrics(labels, nested_mean),
+        "nested_quartic_position015": competition_metrics(
+            labels, nested_position_mean
+        ),
         "nested_logit": competition_metrics(labels, nested_logit),
         "nested_logit_mean015": competition_metrics(labels, nested_logit_mean),
         "full_oof_raw": competition_metrics(labels, blended_oof),
@@ -279,6 +312,11 @@ def main() -> None:
         "test_quartic_mean": float(calibrated_test.mean()),
         "test_mean015_shift": mean_shift,
         "test_mean015_mean": float(mean_test.mean()),
+        "test_position015_shifts": position_mean_shifts,
+        "test_position015_means": [
+            float(position_mean_test[np.arange(len(position_mean_test)) % 3 == position].mean())
+            for position in range(3)
+        ],
         "test_logit_mean": float(logit_test.mean()),
         "test_logit_mean015_shift": logit_mean_shift,
         "test_logit_mean015_mean": float(logit_mean_test.mean()),
@@ -290,6 +328,7 @@ def main() -> None:
             "nested_raw": nested_raw,
             "nested_quartic": nested_quartic,
             "nested_quartic_mean015": nested_mean,
+            "nested_quartic_position015": nested_position_mean,
             "nested_logit": nested_logit,
             "nested_logit_mean015": nested_logit_mean,
         }
@@ -303,9 +342,14 @@ def main() -> None:
     shifted_submission["Target"] = np.clip(mean_test, 1e-6, 1 - 1e-6)
     logit_submission = reference_test.copy()
     logit_submission["Target"] = np.clip(logit_mean_test, 1e-6, 1 - 1e-6)
+    position_submission = reference_test.copy()
+    position_submission["Target"] = np.clip(
+        position_mean_test, 1e-6, 1 - 1e-6
+    )
     assert not unshifted_submission.isna().any().any()
     assert not shifted_submission.isna().any().any()
     assert not logit_submission.isna().any().any()
+    assert not position_submission.isna().any().any()
     unshifted_submission.to_csv(
         SUBMISSION_DIR / "ordered_jointstress_blend_quartic.csv", index=False
     )
@@ -315,10 +359,15 @@ def main() -> None:
     logit_submission.to_csv(
         SUBMISSION_DIR / "ordered_jointstress_blend_logit_mean015.csv", index=False
     )
+    position_submission.to_csv(
+        SUBMISSION_DIR / "ordered_jointstress_blend_quartic_position015.csv",
+        index=False,
+    )
     print(json.dumps(metrics, indent=2))
     print("Saved submissions/ordered_jointstress_blend_quartic.csv")
     print("Saved submissions/ordered_jointstress_blend_quartic_mean015.csv")
     print("Saved submissions/ordered_jointstress_blend_logit_mean015.csv")
+    print("Saved submissions/ordered_jointstress_blend_quartic_position015.csv")
 
 
 if __name__ == "__main__":
