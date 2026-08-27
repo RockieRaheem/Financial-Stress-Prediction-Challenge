@@ -102,3 +102,10 @@ Train the selected 300-feature log-stress model across five folds with:
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python src/train_lightgbm_logstress_pruned.py
 ```
+
+Train CatBoost on the same 300-feature log-stress subset with:
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+uv run python src/train_catboost_logstress_pruned.py
+```
