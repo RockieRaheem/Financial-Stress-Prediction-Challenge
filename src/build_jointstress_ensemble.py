@@ -27,9 +27,9 @@ MODEL_FILES = {
         ARTIFACT_DIR / "catboost_jointstress_pruned_oof.csv",
         SUBMISSION_DIR / "catboost_jointstress_pruned_100.csv",
     ),
-    "catboost_jointstress_depth6": (
-        ARTIFACT_DIR / "catboost_jointstress_depth6_oof.csv",
-        SUBMISSION_DIR / "catboost_jointstress_depth6_100.csv",
+    "catboost_jointstress_ordered": (
+        ARTIFACT_DIR / "catboost_jointstress_ordered_oof.csv",
+        SUBMISSION_DIR / "catboost_jointstress_ordered_100.csv",
     ),
     "lightgbm_jointstress_pruned": (
         ARTIFACT_DIR / "lightgbm_jointstress_pruned_oof.csv",
@@ -307,18 +307,18 @@ def main() -> None:
     assert not shifted_submission.isna().any().any()
     assert not logit_submission.isna().any().any()
     unshifted_submission.to_csv(
-        SUBMISSION_DIR / "jointstress_blend_quartic.csv", index=False
+        SUBMISSION_DIR / "ordered_jointstress_blend_quartic.csv", index=False
     )
     shifted_submission.to_csv(
-        SUBMISSION_DIR / "jointstress_blend_quartic_mean015.csv", index=False
+        SUBMISSION_DIR / "ordered_jointstress_blend_quartic_mean015.csv", index=False
     )
     logit_submission.to_csv(
-        SUBMISSION_DIR / "jointstress_blend_logit_mean015.csv", index=False
+        SUBMISSION_DIR / "ordered_jointstress_blend_logit_mean015.csv", index=False
     )
     print(json.dumps(metrics, indent=2))
-    print("Saved submissions/jointstress_blend_quartic.csv")
-    print("Saved submissions/jointstress_blend_quartic_mean015.csv")
-    print("Saved submissions/jointstress_blend_logit_mean015.csv")
+    print("Saved submissions/ordered_jointstress_blend_quartic.csv")
+    print("Saved submissions/ordered_jointstress_blend_quartic_mean015.csv")
+    print("Saved submissions/ordered_jointstress_blend_logit_mean015.csv")
 
 
 if __name__ == "__main__":
