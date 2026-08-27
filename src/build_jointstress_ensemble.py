@@ -70,6 +70,32 @@ def optimize_weights(labels: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return result.x
 
 
+def optimize_logit_parameters(labels: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """Fit a nonnegative logit blend with a free intercept."""
+    logits = clipped_logit(matrix)
+    model_count = matrix.shape[1]
+    result = minimize(
+        lambda parameters: log_loss(
+            labels,
+            expit(parameters[0] + logits @ parameters[1:]),
+        ),
+        x0=np.concatenate([[0.0], np.full(model_count, 1.0 / model_count)]),
+        method="L-BFGS-B",
+        bounds=[(-10.0, 10.0)] + [(0.0, 5.0)] * model_count,
+        options={"ftol": 1e-15, "maxiter": 2_000},
+    )
+    if not result.success:
+        raise RuntimeError(f"Logit optimization failed: {result.message}")
+    return result.x
+
+
+def apply_logit_blend(
+    matrix: np.ndarray, parameters: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    blended_logits = parameters[0] + clipped_logit(matrix) @ parameters[1:]
+    return expit(blended_logits), blended_logits
+
+
 def fit_monotone_quartic(
     labels: np.ndarray,
     predictions: np.ndarray,
@@ -159,7 +185,10 @@ def main() -> None:
     nested_raw = np.zeros(len(labels))
     nested_quartic = np.zeros(len(labels))
     nested_mean = np.zeros(len(labels))
+    nested_logit = np.zeros(len(labels))
+    nested_logit_mean = np.zeros(len(labels))
     nested_weights = []
+    nested_logit_parameters = []
     folds = StratifiedKFold(n_splits=META_SPLITS, shuffle=True, random_state=SEED)
     for fit_index, valid_index in folds.split(oof_matrix, labels):
         weights = optimize_weights(labels[fit_index], oof_matrix[fit_index])
@@ -178,6 +207,18 @@ def main() -> None:
         nested_quartic[valid_index] = calibrated
         nested_mean[valid_index] = shifted
         nested_weights.append(weights)
+        logit_parameters = optimize_logit_parameters(
+            labels[fit_index], oof_matrix[fit_index]
+        )
+        logit_predictions, logit_predictions_eta = apply_logit_blend(
+            oof_matrix[valid_index], logit_parameters
+        )
+        shifted_logit, _ = shift_to_mean(
+            logit_predictions_eta, EXPECTED_PREVALENCE
+        )
+        nested_logit[valid_index] = logit_predictions
+        nested_logit_mean[valid_index] = shifted_logit
+        nested_logit_parameters.append(logit_parameters)
 
     weights = optimize_weights(labels, oof_matrix)
     blended_oof = oof_matrix @ weights
@@ -194,6 +235,12 @@ def main() -> None:
     mean_test, mean_shift = shift_to_mean(
         calibrated_test_logits, EXPECTED_PREVALENCE
     )
+    logit_parameters = optimize_logit_parameters(labels, oof_matrix)
+    logit_oof, _ = apply_logit_blend(oof_matrix, logit_parameters)
+    logit_test, logit_test_eta = apply_logit_blend(test_matrix, logit_parameters)
+    logit_mean_test, logit_mean_shift = shift_to_mean(
+        logit_test_eta, EXPECTED_PREVALENCE
+    )
 
     metrics = {
         "model_names": model_names,
@@ -209,8 +256,18 @@ def main() -> None:
         "nested_raw": competition_metrics(labels, nested_raw),
         "nested_quartic": competition_metrics(labels, nested_quartic),
         "nested_quartic_mean015": competition_metrics(labels, nested_mean),
+        "nested_logit": competition_metrics(labels, nested_logit),
+        "nested_logit_mean015": competition_metrics(labels, nested_logit_mean),
         "full_oof_raw": competition_metrics(labels, blended_oof),
         "full_oof_quartic": competition_metrics(labels, calibrated_oof),
+        "full_oof_logit": competition_metrics(labels, logit_oof),
+        "logit_parameters": [float(value) for value in logit_parameters],
+        "nested_logit_parameter_mean": [
+            float(value) for value in np.mean(nested_logit_parameters, axis=0)
+        ],
+        "nested_logit_parameter_std": [
+            float(value) for value in np.std(nested_logit_parameters, axis=0)
+        ],
         "calibration_center": center,
         "calibration_scale": scale,
         "calibration_coefficients": [float(value) for value in coefficients],
@@ -218,6 +275,9 @@ def main() -> None:
         "test_quartic_mean": float(calibrated_test.mean()),
         "test_mean015_shift": mean_shift,
         "test_mean015_mean": float(mean_test.mean()),
+        "test_logit_mean": float(logit_test.mean()),
+        "test_logit_mean015_shift": logit_mean_shift,
+        "test_logit_mean015_mean": float(logit_mean_test.mean()),
     }
     pd.DataFrame(
         {
@@ -226,6 +286,8 @@ def main() -> None:
             "nested_raw": nested_raw,
             "nested_quartic": nested_quartic,
             "nested_quartic_mean015": nested_mean,
+            "nested_logit": nested_logit,
+            "nested_logit_mean015": nested_logit_mean,
         }
     ).to_csv(ARTIFACT_DIR / "jointstress_ensemble_oof.csv", index=False)
     (ARTIFACT_DIR / "jointstress_ensemble_metrics.json").write_text(
@@ -235,17 +297,24 @@ def main() -> None:
     unshifted_submission["Target"] = np.clip(calibrated_test, 1e-6, 1 - 1e-6)
     shifted_submission = reference_test.copy()
     shifted_submission["Target"] = np.clip(mean_test, 1e-6, 1 - 1e-6)
+    logit_submission = reference_test.copy()
+    logit_submission["Target"] = np.clip(logit_mean_test, 1e-6, 1 - 1e-6)
     assert not unshifted_submission.isna().any().any()
     assert not shifted_submission.isna().any().any()
+    assert not logit_submission.isna().any().any()
     unshifted_submission.to_csv(
         SUBMISSION_DIR / "jointstress_blend_quartic.csv", index=False
     )
     shifted_submission.to_csv(
         SUBMISSION_DIR / "jointstress_blend_quartic_mean015.csv", index=False
     )
+    logit_submission.to_csv(
+        SUBMISSION_DIR / "jointstress_blend_logit_mean015.csv", index=False
+    )
     print(json.dumps(metrics, indent=2))
     print("Saved submissions/jointstress_blend_quartic.csv")
     print("Saved submissions/jointstress_blend_quartic_mean015.csv")
+    print("Saved submissions/jointstress_blend_logit_mean015.csv")
 
 
 if __name__ == "__main__":
