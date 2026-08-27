@@ -237,6 +237,7 @@ def add_temporal_features(
             monthly_average = []
             monthly_max_share = []
             monthly_diversity = []
+            monthly_repeat = []
             for month in range(1, 7):
                 volume = frame[f"m{month}_{channel}_volume"]
                 total = frame[f"m{month}_{channel}_total_value"]
@@ -245,16 +246,20 @@ def add_temporal_features(
                 average = safe_ratio(total, volume)
                 max_share = safe_ratio(highest, total)
                 diversity = safe_ratio(unique, volume)
+                repeat = safe_ratio(volume, unique)
                 feature_data[f"m{month}_{channel}_average_value"] = average
                 feature_data[f"m{month}_{channel}_max_share"] = max_share
                 feature_data[f"m{month}_{channel}_diversity"] = diversity
+                feature_data[f"m{month}_{channel}_repeat_per_party"] = repeat
                 monthly_average.append(average)
                 monthly_max_share.append(max_share)
                 monthly_diversity.append(diversity)
+                monthly_repeat.append(repeat)
             for metric, monthly in [
                 ("average_value", monthly_average),
                 ("max_share", monthly_max_share),
                 ("diversity", monthly_diversity),
+                ("repeat_per_party", monthly_repeat),
             ]:
                 values = np.column_stack(monthly)
                 log_values = np.sign(values) * np.log1p(np.abs(values))
@@ -265,6 +270,9 @@ def add_temporal_features(
                     log_values[:, :3].mean(axis=1) - log_values[:, 3:].mean(axis=1)
                 )
                 feature_data[f"detail_{channel}_{metric}_std"] = values.std(axis=1)
+                feature_data[f"detail_{channel}_{metric}_recent_mean"] = values[:, :3].mean(axis=1)
+                feature_data[f"detail_{channel}_{metric}_recent_max"] = values[:, :3].max(axis=1)
+
 
     engineered = pd.DataFrame(feature_data, index=frame.index)
     return pd.concat([frame, engineered], axis=1).replace([np.inf, -np.inf], np.nan)
