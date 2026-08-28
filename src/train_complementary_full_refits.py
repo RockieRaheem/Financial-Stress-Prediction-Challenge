@@ -67,9 +67,6 @@ def main() -> None:
     X_joint = featured.iloc[: len(train)][joint_features].reset_index(drop=True)
     X_joint_test = featured.iloc[len(train) :][joint_features].reset_index(drop=True)
     joint_categorical = X_joint.select_dtypes(exclude="number").columns.tolist()
-    joint_categorical_indices = [
-        X_joint.columns.get_loc(column) for column in joint_categorical
-    ]
 
     logstress_ranking = pd.read_csv(
         ARTIFACT_DIR / "lightgbm_logstress_importance.csv"
@@ -89,14 +86,14 @@ def main() -> None:
     logstress_categorical_indices = [
         X_logstress.columns.get_loc(column) for column in logstress_categorical
     ]
+    ARTIFACT_DIR.mkdir(exist_ok=True)
+    SUBMISSION_DIR.mkdir(exist_ok=True)
 
-    plain_joint_predictions = []
-    lightgbm_joint_predictions = []
     logstress_predictions = []
     for seed in SEEDS:
-        plain_joint = CatBoostClassifier(
-            iterations=500,
-            learning_rate=0.03,
+        logstress = CatBoostClassifier(
+            iterations=700,
+            learning_rate=0.035,
             depth=7,
             loss_function="Logloss",
             random_seed=seed,
@@ -107,14 +104,24 @@ def main() -> None:
             verbose=200,
             thread_count=-1,
         )
-        plain_joint.fit(
-            X_joint, y, cat_features=joint_categorical_indices
+        logstress.fit(
+            X_logstress, y, cat_features=logstress_categorical_indices
         )
-        plain_joint_predictions.append(
-            plain_joint.predict_proba(X_joint_test)[:, 1]
+        logstress_predictions.append(
+            logstress.predict_proba(X_logstress_test)[:, 1]
         )
-        print(f"Finished plain joint CatBoost seed {seed}", flush=True)
+        print(f"Finished log-stress CatBoost seed {seed}", flush=True)
 
+    logstress_matrix = np.column_stack(logstress_predictions)
+    save_submission(
+        sample,
+        test,
+        logstress_matrix,
+        "catboost_logstress_pruned_full_3seed_300.csv",
+    )
+
+    lightgbm_joint_predictions = []
+    for seed in SEEDS:
         lightgbm_joint = lgb.LGBMClassifier(
             objective="binary",
             n_estimators=400,
@@ -141,40 +148,18 @@ def main() -> None:
         )
         print(f"Finished joint LightGBM seed {seed}", flush=True)
 
-        logstress = CatBoostClassifier(
-            iterations=700,
-            learning_rate=0.035,
-            depth=7,
-            loss_function="Logloss",
-            random_seed=seed,
-            l2_leaf_reg=7.0,
-            random_strength=0.3,
-            rsm=0.9,
-            allow_writing_files=False,
-            verbose=200,
-            thread_count=-1,
-        )
-        logstress.fit(
-            X_logstress, y, cat_features=logstress_categorical_indices
-        )
-        logstress_predictions.append(
-            logstress.predict_proba(X_logstress_test)[:, 1]
-        )
-        print(f"Finished log-stress CatBoost seed {seed}", flush=True)
-
-    plain_joint_matrix = np.column_stack(plain_joint_predictions)
     lightgbm_joint_matrix = np.column_stack(lightgbm_joint_predictions)
-    logstress_matrix = np.column_stack(logstress_predictions)
+    save_submission(
+        sample,
+        test,
+        lightgbm_joint_matrix,
+        "lightgbm_jointstress_pruned_full_3seed_100.csv",
+    )
     metrics = {
         "base_seed": BASE_SEED,
         "seeds": SEEDS,
         "seed_count": len(SEEDS),
         "models": {
-            "catboost_jointstress_pruned_full": {
-                "feature_count": JOINT_FEATURE_COUNT,
-                "iterations": 500,
-                **prediction_summary(plain_joint_matrix),
-            },
             "lightgbm_jointstress_pruned_full": {
                 "feature_count": JOINT_FEATURE_COUNT,
                 "iterations": 400,
@@ -187,28 +172,8 @@ def main() -> None:
             },
         },
     }
-    ARTIFACT_DIR.mkdir(exist_ok=True)
-    SUBMISSION_DIR.mkdir(exist_ok=True)
     (ARTIFACT_DIR / "complementary_full_refit_metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
-    )
-    save_submission(
-        sample,
-        test,
-        plain_joint_matrix,
-        "catboost_jointstress_pruned_full_3seed_100.csv",
-    )
-    save_submission(
-        sample,
-        test,
-        lightgbm_joint_matrix,
-        "lightgbm_jointstress_pruned_full_3seed_100.csv",
-    )
-    save_submission(
-        sample,
-        test,
-        logstress_matrix,
-        "catboost_logstress_pruned_full_3seed_300.csv",
     )
     print(json.dumps(metrics, indent=2))
 
