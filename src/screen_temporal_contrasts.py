@@ -127,7 +127,7 @@ def main() -> None:
     base_features = ranking["feature"].head(BASE_FEATURE_COUNT).tolist()
     labels = train[TARGET].to_numpy(dtype=int)
     folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
-    fit_index, valid_index = next(folds.split(featured, labels))
+    fit_index, valid_index = next(folds.split(featured.iloc[: len(train)], labels))
     contrast_ranking = rank_features(contrasts, labels, fit_index)
 
     control_frame = pd.read_csv(
