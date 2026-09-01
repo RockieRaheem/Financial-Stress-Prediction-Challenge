@@ -28,6 +28,7 @@ META_SPLITS = 10
 EXPECTED_PREVALENCE = 0.15
 TENFOLD_ORDERED_WEIGHT = 0.75
 FULL_REFIT_ORDERED_WEIGHT = 0.30
+FULL_REFIT_ORDERED_WEIGHTS = [0.30, 0.45, 0.60]
 MONOTONIC_WEIGHTS = [0.0, 0.25, 0.5, 0.75, 1.0]
 MODEL_FILES = {
     "catboost_jointstress_pruned": (
@@ -223,15 +224,42 @@ def main() -> None:
         ],
     )
     selected = fitted[best_weight]
-    selected_test_matrix = replace_column(
-        public_test_matrix, lightgbm_index, selected["lightgbm_test"]
-    )
-    _, selected_test_eta = apply_logit_blend(
-        selected_test_matrix, selected["parameters"]
-    )
-    selected_test_predictions, selected_test_shift = shift_to_mean(
-        selected_test_eta, EXPECTED_PREVALENCE
-    )
+    output_files = []
+    output_predictions = {}
+    output_shifts = {}
+    for full_refit_weight in FULL_REFIT_ORDERED_WEIGHTS:
+        weighted_ordered_test = (
+            (1.0 - full_refit_weight) * ordered_cv_test
+            + full_refit_weight * full_refit_ordered_test["Target"].to_numpy()
+        )
+        weighted_public_matrix = replace_column(
+            base_test_matrix, ordered_index, weighted_ordered_test
+        )
+        selected_test_matrix = replace_column(
+            weighted_public_matrix, lightgbm_index, selected["lightgbm_test"]
+        )
+        _, selected_test_eta = apply_logit_blend(
+            selected_test_matrix, selected["parameters"]
+        )
+        predictions, prediction_shift = shift_to_mean(
+            selected_test_eta, EXPECTED_PREVALENCE
+        )
+        full_percent = int(round(100 * full_refit_weight))
+        weight_percent = int(round(100 * best_weight))
+        output_filename = (
+            f"highdata_jointstress_monolgb_w{weight_percent:03d}_"
+            f"cv075_full{full_percent:03d}_logit_mean015.csv"
+        )
+        output_submission = reference_test.copy()
+        output_submission["Target"] = np.clip(predictions, 1e-6, 1 - 1e-6)
+        assert np.isfinite(output_submission["Target"]).all()
+        output_submission.to_csv(SUBMISSION_DIR / output_filename, index=False)
+        output_files.append(output_filename)
+        output_predictions[full_refit_weight] = predictions
+        output_shifts[full_refit_weight] = prediction_shift
+
+    selected_test_predictions = output_predictions[FULL_REFIT_ORDERED_WEIGHT]
+    selected_test_shift = output_shifts[FULL_REFIT_ORDERED_WEIGHT]
     if not np.isclose(selected_test_predictions.mean(), EXPECTED_PREVALENCE):
         raise AssertionError("Selected test predictions were not centered to prevalence")
 
@@ -260,16 +288,6 @@ def main() -> None:
         )["competition_score"]
         meta_fold_deltas.append(selected_score - anchor_score)
 
-    weight_percent = int(round(100 * best_weight))
-    filename = (
-        f"highdata_jointstress_monolgb_w{weight_percent:03d}_"
-        "cv075_full030_logit_mean015.csv"
-    )
-    submission = reference_test.copy()
-    submission["Target"] = np.clip(selected_test_predictions, 1e-6, 1 - 1e-6)
-    assert np.isfinite(submission["Target"]).all()
-    assert submission["Target"].between(0.0, 1.0).all()
-    submission.to_csv(SUBMISSION_DIR / filename, index=False)
     pd.DataFrame(
         {
             ID_COLUMN: reference_oof[ID_COLUMN],
@@ -285,6 +303,7 @@ def main() -> None:
         "selected_monotonic_weight": best_weight,
         "tenfold_ordered_weight": TENFOLD_ORDERED_WEIGHT,
         "full_refit_ordered_weight": FULL_REFIT_ORDERED_WEIGHT,
+        "full_refit_ordered_weights": FULL_REFIT_ORDERED_WEIGHTS,
         "results": results,
         "anchor_oof_max_abs_difference": anchor_oof_max_abs_difference,
         "anchor_test_max_abs_difference": anchor_test_max_abs_difference,
@@ -297,13 +316,14 @@ def main() -> None:
         "selected_test_shift": selected_test_shift,
         "selected_test_mean": float(selected_test_predictions.mean()),
         "selected_test_standard_deviation": float(selected_test_predictions.std()),
-        "output_file": filename,
+        "output_files": output_files,
     }
     (ARTIFACT_DIR / "highdata_jointstress_monolgb_metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
     print(json.dumps(metrics, indent=2))
-    print(f"Saved submissions/{filename}")
+    for output_filename in output_files:
+        print(f"Saved submissions/{output_filename}")
 
 
 if __name__ == "__main__":
