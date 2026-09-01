@@ -26,7 +26,7 @@ SEED = 20260826
 META_SPLITS = 10
 EXPECTED_PREVALENCE = 0.15
 CV_ORDERED_WEIGHTS = [0.0, 0.25, 0.5, 0.75, 1.0]
-FULL_REFIT_WEIGHTS = [0.0, 0.15, 0.3]
+FULL_REFIT_WEIGHTS = [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 1.0]
 MODEL_FILES = {
     "catboost_jointstress_pruned": (
         ARTIFACT_DIR / "catboost_jointstress_pruned_oof.csv",
