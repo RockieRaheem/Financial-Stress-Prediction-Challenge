@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.special import logit
+from scipy.special import expit, logit
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
@@ -57,14 +57,20 @@ def anchor_oof_predictions() -> tuple[pd.DataFrame, np.ndarray]:
 
 
 def blend(
-    anchor: np.ndarray, candidate: np.ndarray, weight: float, prevalence: float
+    anchor: np.ndarray,
+    candidate: np.ndarray,
+    weight: float,
+    prevalence: float,
+    *,
+    recenter: bool = True,
 ) -> np.ndarray:
     """Blend a candidate with the anchor in log-odds space."""
     anchor_eta = logit(np.clip(anchor, 1e-6, 1 - 1e-6))
     candidate_eta = logit(np.clip(candidate, 1e-6, 1 - 1e-6))
-    predictions, _ = shift_to_mean(
-        (1.0 - weight) * anchor_eta + weight * candidate_eta, prevalence
-    )
+    eta = (1.0 - weight) * anchor_eta + weight * candidate_eta
+    if not recenter:
+        return expit(eta)
+    predictions, _ = shift_to_mean(eta, prevalence)
     return predictions
 
 
@@ -180,6 +186,7 @@ def main() -> None:
                 valid_predictions,
                 float(weight),
                 float(labels[valid_index].mean()),
+                recenter=False,
             )
             metrics = competition_metrics(labels[valid_index], blended)
             blend_results.append(
