@@ -26,7 +26,7 @@ MONOLGB_FILES = {
     60: SUBMISSION_DIR
     / "highdata_jointstress_monolgb_w100_cv075_full060_logit_mean015.csv",
 }
-FULL_REFIT_WEIGHTS = [0, 15, 30, 45, 60]
+FULL_REFIT_WEIGHTS = [0, 30, 45, 60]
 TEMPERATURES = [0.997, 1.0, 1.003]
 
 
@@ -89,7 +89,7 @@ def main() -> None:
                 )
                 temperature_filename = (
                     "combined_repeat090_residual525_"
-                    f"full{weight:03d}_temp{int(temperature * 1000):04d}_mean015.csv"
+                    f"full{weight:03d}_temp{round(temperature * 1000):04d}_mean015.csv"
                 )
                 temperature_submission = anchor.copy()
                 temperature_submission["Target"] = np.clip(
