@@ -26,6 +26,8 @@ MONOLGB_FILES = {
     60: SUBMISSION_DIR
     / "highdata_jointstress_monolgb_w100_cv075_full060_logit_mean015.csv",
 }
+FULL_REFIT_WEIGHTS = [0, 15, 30, 45, 60]
+TEMPERATURES = [0.997, 1.0, 1.003]
 
 
 def main() -> None:
@@ -43,13 +45,17 @@ def main() -> None:
         "public_anchor_file": PUBLIC_ANCHOR.name,
         "variants": {},
     }
-    for weight in [45, 60]:
-        weighted_eta = logit(
-            np.clip(monolgb[weight]["Target"].to_numpy(), 1e-6, 1 - 1e-6)
-        )
-        predictions, shift = shift_to_mean(
-            anchor_eta + weighted_eta - baseline_eta, EXPECTED_PREVALENCE
-        )
+    for weight in FULL_REFIT_WEIGHTS:
+        if weight == 0:
+            predictions = anchor_predictions.copy()
+            shift = 0.0
+        else:
+            weighted_eta = logit(
+                np.clip(monolgb[weight]["Target"].to_numpy(), 1e-6, 1 - 1e-6)
+            )
+            predictions, shift = shift_to_mean(
+                anchor_eta + weighted_eta - baseline_eta, EXPECTED_PREVALENCE
+            )
         filename = (
             "combined_repeat090_residual525_"
             f"full{weight:03d}_mean015.csv"
@@ -61,6 +67,7 @@ def main() -> None:
         submission.to_csv(SUBMISSION_DIR / filename, index=False)
         metrics["variants"][filename] = {
             "full_refit_weight": weight / 100.0,
+            "temperature": 1.0,
             "intercept_shift": shift,
             "mean": float(predictions.mean()),
             "standard_deviation": float(predictions.std()),
@@ -74,6 +81,30 @@ def main() -> None:
                 np.max(np.abs(predictions - anchor_predictions))
             ),
         }
+        if weight in [30, 45, 60]:
+            for temperature in TEMPERATURES:
+                temperature_predictions, temperature_shift = shift_to_mean(
+                    logit(np.clip(predictions, 1e-6, 1 - 1e-6)) * temperature,
+                    EXPECTED_PREVALENCE,
+                )
+                temperature_filename = (
+                    "combined_repeat090_residual525_"
+                    f"full{weight:03d}_temp{int(temperature * 1000):04d}_mean015.csv"
+                )
+                temperature_submission = anchor.copy()
+                temperature_submission["Target"] = np.clip(
+                    temperature_predictions, 1e-6, 1 - 1e-6
+                )
+                temperature_submission.to_csv(
+                    SUBMISSION_DIR / temperature_filename, index=False
+                )
+                metrics["variants"][temperature_filename] = {
+                    "full_refit_weight": weight / 100.0,
+                    "temperature": temperature,
+                    "intercept_shift": temperature_shift,
+                    "mean": float(temperature_predictions.mean()),
+                    "standard_deviation": float(temperature_predictions.std()),
+                }
     (ARTIFACT_DIR / "public_anchor_fullrefit_metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
