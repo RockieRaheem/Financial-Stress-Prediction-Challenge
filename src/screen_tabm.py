@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import math
@@ -88,7 +89,12 @@ def predict_probabilities(
 
 
 def main() -> None:
-    set_seed(SEED)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--fold", type=int, default=1, choices=range(1, 6))
+    args = parser.parse_args()
+    fold_number = args.fold
+    model_seed = SEED + fold_number - 1
+    set_seed(model_seed)
     torch.set_num_threads(max(1, min(8, os.cpu_count() or 1)))
     train = pd.read_csv(DATA_DIR / "Train.csv")
     test = pd.read_csv(DATA_DIR / "Test.csv")
@@ -108,18 +114,18 @@ def main() -> None:
     categorical = categorical[: len(train)]
 
     folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
-    fit_index, valid_index = next(folds.split(numeric, labels))
+    fit_index, valid_index = list(folds.split(numeric, labels))[fold_number - 1]
     medians = numeric.iloc[fit_index].median()
     fit_values = numeric.iloc[fit_index].fillna(medians).to_numpy(dtype=np.float32)
     valid_values = numeric.iloc[valid_index].fillna(medians).to_numpy(dtype=np.float32)
-    noise = np.random.default_rng(SEED).normal(
+    noise = np.random.default_rng(model_seed).normal(
         0.0, 1e-5, fit_values.shape
     ).astype(np.float32)
     transformer = QuantileTransformer(
         n_quantiles=min(1000, max(10, len(fit_index) // 30)),
         output_distribution="normal",
         subsample=None,
-        random_state=SEED,
+        random_state=model_seed,
     ).fit(fit_values + noise)
     fit_values = transformer.transform(fit_values).astype(np.float32)
     valid_values = transformer.transform(valid_values).astype(np.float32)
@@ -212,8 +218,8 @@ def main() -> None:
             }
         )
     output = {
-        "seed": SEED,
-        "fold": 1,
+        "seed": model_seed,
+        "fold": fold_number,
         "fit_rows": int(len(fit_index)),
         "validation_rows": int(len(valid_index)),
         "feature_count": FEATURE_COUNT,
@@ -238,8 +244,10 @@ def main() -> None:
             "anchor_prediction": anchor,
             "prediction": best_predictions,
         }
-    ).to_csv(ARTIFACT_DIR / "tabm_fold1_predictions.csv", index=False)
-    (ARTIFACT_DIR / "tabm_screen.json").write_text(
+    ).to_csv(
+        ARTIFACT_DIR / f"tabm_fold{fold_number}_predictions.csv", index=False
+    )
+    (ARTIFACT_DIR / f"tabm_fold{fold_number}_screen.json").write_text(
         json.dumps(output, indent=2), encoding="utf-8"
     )
     print(json.dumps(output, indent=2))
