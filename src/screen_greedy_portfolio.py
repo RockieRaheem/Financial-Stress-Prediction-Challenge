@@ -25,6 +25,7 @@ BASE_COMPONENTS = {
     "realmlp_5fold_oof.csv",
     "ebm_oof.csv",
     "third_ordered_ensemble_oof.csv",
+    "ebm_top200_interactions50_leaves3_oof.csv",
 }
 
 
@@ -45,8 +46,13 @@ def main() -> None:
         + 0.20 * component_logits["ebm_oof.csv"]
     )
     anchor_logit = (
-        0.70 * core_logit
-        + 0.30 * component_logits["third_ordered_ensemble_oof.csv"]
+        0.90
+        * (
+            0.70 * core_logit
+            + 0.30 * component_logits["third_ordered_ensemble_oof.csv"]
+        )
+        + 0.10
+        * component_logits["ebm_top200_interactions50_leaves3_oof.csv"]
     )
     anchor = expit(anchor_logit)
     anchor_metrics = metrics(y, anchor)
@@ -110,14 +116,15 @@ def main() -> None:
         "seed": SEED,
         "anchor_metrics": anchor_metrics,
         "base_weights": {
-            "catboost_jointstress_ordered_20fold_oof.csv": 0.504,
-            "realmlp_5fold_oof.csv": 0.056,
-            "ebm_oof.csv": 0.140,
-            "third_ordered_ensemble_oof.csv": 0.300,
+            "catboost_jointstress_ordered_20fold_oof.csv": 0.4536,
+            "realmlp_5fold_oof.csv": 0.0504,
+            "ebm_oof.csv": 0.1260,
+            "third_ordered_ensemble_oof.csv": 0.2700,
+            "ebm_top200_interactions50_leaves3_oof.csv": 0.1000,
         },
         "results": results,
     }
-    (ARTIFACT_DIR / "greedy_portfolio_screen.json").write_text(
+    (ARTIFACT_DIR / "third_stage_portfolio_screen.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
     print(json.dumps(results[:20], indent=2), flush=True)
