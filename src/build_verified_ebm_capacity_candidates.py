@@ -20,7 +20,7 @@ ARTIFACT_DIR = ROOT / "artifacts"
 SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
-WEIGHTS = [0.05, 0.10]
+WEIGHTS = [0.05, 0.10, 0.125, 0.15]
 
 
 def load_prediction(filename: str) -> np.ndarray:
