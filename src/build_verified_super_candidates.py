@@ -21,7 +21,7 @@ ARTIFACT_DIR = ROOT / "artifacts"
 SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
-WEIGHTS = [0.20, 0.30]
+WEIGHTS = [0.20, 0.30, 0.40, 0.50]
 
 
 def main() -> None:
