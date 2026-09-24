@@ -24,6 +24,7 @@ ID_COLUMN = "ID"
 SEED = 20260924
 N_SPLITS = 5
 FEATURE_COUNT = 100
+MAX_QUERY_SIZE = 4_000
 LOG_LOSS_DENOMINATOR = 0.595060965
 
 
@@ -37,6 +38,14 @@ def competition_score(labels: np.ndarray, predictions: np.ndarray) -> float:
 def gaussian_rank(values: np.ndarray) -> np.ndarray:
     percentiles = (rankdata(values, method="average") - 0.5) / len(values)
     return norm.ppf(np.clip(percentiles, 1e-6, 1.0 - 1e-6))
+
+
+def query_sizes(row_count: int) -> list[int]:
+    full_queries, remainder = divmod(row_count, MAX_QUERY_SIZE)
+    sizes = [MAX_QUERY_SIZE] * full_queries
+    if remainder:
+        sizes.append(remainder)
+    return sizes
 
 
 def main() -> None:
@@ -88,7 +97,7 @@ def main() -> None:
         model.fit(
             X.iloc[fit_index],
             y[fit_index],
-            group=[len(fit_index)],
+            group=query_sizes(len(fit_index)),
             categorical_feature=categorical,
         )
         predictions = model.predict(X.iloc[valid_index])
