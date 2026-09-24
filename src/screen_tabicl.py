@@ -68,6 +68,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-limit", type=int, default=4_000)
     parser.add_argument("--features", type=int, default=100)
     parser.add_argument("--estimators", type=int, default=1)
+    parser.add_argument(
+        "--feature-source", choices=["engineered", "raw"], default="engineered"
+    )
     return parser.parse_args()
 
 
@@ -77,14 +80,20 @@ def main() -> None:
     train = pd.read_csv(DATA_DIR / "Train.csv")
     y = train[TARGET].to_numpy(dtype=int)
     ranking = pd.read_csv(ARTIFACT_DIR / "lightgbm_jointstress_importance.csv")
-    selected = ranking["feature"].head(args.features).tolist()
-
     raw_features = [
         column for column in train.columns if column not in {ID_COLUMN, TARGET}
     ]
-    featured = add_temporal_features(
-        train[raw_features], include_log_stress=True, include_joint_stress=True
-    )
+    if args.feature_source == "engineered":
+        featured = add_temporal_features(
+            train[raw_features], include_log_stress=True, include_joint_stress=True
+        )
+        selected = ranking["feature"].head(args.features).tolist()
+    else:
+        featured = train[raw_features]
+        raw_set = set(raw_features)
+        selected = [
+            feature for feature in ranking["feature"] if feature in raw_set
+        ][: args.features]
     X = featured[selected].replace([np.inf, -np.inf], np.nan)
 
     folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
@@ -138,6 +147,7 @@ def main() -> None:
         "validation_rows": len(valid_index),
         "feature_count": len(selected),
         "estimators": args.estimators,
+        "feature_source": args.feature_source,
         "elapsed_seconds": time.perf_counter() - started,
         "anchor_metrics": metrics(labels, anchor),
         "standalone_metrics": metrics(labels, tabicl),
@@ -145,9 +155,18 @@ def main() -> None:
         "best_blend": candidates[0],
         "candidates": candidates,
     }
-    output_path = ARTIFACT_DIR / (
-        f"tabicl_screen_fit{len(fit_index)}_valid{len(valid_index)}.json"
+    output_stem = (
+        f"tabicl_{args.feature_source}_fit{len(fit_index)}_valid{len(valid_index)}"
     )
+    pd.DataFrame(
+        {
+            ID_COLUMN: train.iloc[valid_index][ID_COLUMN].to_numpy(),
+            TARGET: labels,
+            "anchor": anchor,
+            "prediction": tabicl,
+        }
+    ).to_csv(ARTIFACT_DIR / f"{output_stem}_predictions.csv", index=False)
+    output_path = ARTIFACT_DIR / f"{output_stem}.json"
     output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2), flush=True)
 
