@@ -23,13 +23,6 @@ TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260826
 FEATURE_COUNT = 50
-CATEGORICAL_COLUMNS = [
-    "gender",
-    "region",
-    "smartphone",
-    "segment",
-    "earning_pattern",
-]
 BLEND_WEIGHTS = [0.0, 0.03, 0.05, 0.075, 0.10, 0.15, 0.20]
 
 
@@ -49,8 +42,7 @@ def main() -> None:
     selected = ranking["feature"].head(FEATURE_COUNT).tolist()
     numeric = featured.iloc[: len(train)][selected].copy()
     numeric = numeric.replace([np.inf, -np.inf], np.nan)
-    categorical = train[CATEGORICAL_COLUMNS].astype(str).reset_index(drop=True)
-    features = pd.concat([numeric.reset_index(drop=True), categorical], axis=1)
+    features = numeric.reset_index(drop=True)
     fit_index, valid_index = list(
         StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED).split(
             features, labels
@@ -78,7 +70,6 @@ def main() -> None:
         labels[fit_index],
         X_val=features.iloc[valid_index],
         y_val=labels[valid_index],
-        cat_col_names=CATEGORICAL_COLUMNS,
     )
     predictions = model.predict_proba(features.iloc[valid_index])[:, 1]
     anchor_frame = pd.read_csv(ARTIFACT_DIR / "third_ordered_ensemble_oof.csv")
