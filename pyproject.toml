@@ -16,6 +16,7 @@ dependencies = [
     "scikit-learn>=1.6,<2",
     "seaborn>=0.13,<1",
     "skorch>=1.4.0",
+    "tabicl>=2.2.0",
     "tabm>=0.0.3",
     "xgboost>=3.1,<4",
 ]
