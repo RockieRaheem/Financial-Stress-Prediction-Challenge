@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -38,11 +39,21 @@ CONFIGURATIONS = [
 ]
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--configuration",
+        choices=[configuration["name"] for configuration in CONFIGURATIONS],
+    )
+    return parser.parse_args()
+
+
 def load_prediction(filename: str) -> np.ndarray:
     return pd.read_csv(ARTIFACT_DIR / filename)["prediction"].to_numpy(dtype=float)
 
 
 def main() -> None:
+    args = parse_args()
     train = pd.read_csv(DATA_DIR / "Train.csv")
     test = pd.read_csv(DATA_DIR / "Test.csv")
     ranking = pd.read_csv(ARTIFACT_DIR / "lightgbm_jointstress_importance.csv")
@@ -71,14 +82,21 @@ def main() -> None:
     )
 
     results = []
-    for configuration in CONFIGURATIONS:
+    configurations = [
+        configuration
+        for configuration in CONFIGURATIONS
+        if args.configuration is None or configuration["name"] == args.configuration
+    ]
+    for configuration in configurations:
         selected = ranking["feature"].head(configuration["feature_count"]).tolist()
         X = featured.iloc[: len(train)][selected].reset_index(drop=True)
+        X_test = featured.iloc[len(train) :][selected].reset_index(drop=True)
         feature_types = [
             "nominal" if feature in categorical else "continuous"
             for feature in selected
         ]
         oof = np.zeros(len(train), dtype=float)
+        test_predictions = np.zeros(len(test), dtype=float)
         fold_results = []
         for fold, (fit_index, valid_index) in enumerate(folds, start=1):
             model = ExplainableBoostingClassifier(
@@ -100,6 +118,7 @@ def main() -> None:
             model.fit(X.iloc[fit_index], y[fit_index])
             predictions = model.predict_proba(X.iloc[valid_index])[:, 1]
             oof[valid_index] = predictions
+            test_predictions += model.predict_proba(X_test)[:, 1] / N_SPLITS
             result = {"fold": fold, **metrics(y[valid_index], predictions)}
             fold_results.append(result)
             print(f"{configuration['name']} fold {fold}: {result}", flush=True)
@@ -143,6 +162,11 @@ def main() -> None:
             {ID_COLUMN: train[ID_COLUMN], TARGET: y, "prediction": oof}
         ).to_csv(
             ARTIFACT_DIR / f"ebm_{configuration['name']}_oof.csv", index=False
+        )
+        pd.DataFrame(
+            {ID_COLUMN: test[ID_COLUMN], "prediction": test_predictions}
+        ).to_csv(
+            ARTIFACT_DIR / f"ebm_{configuration['name']}_test.csv", index=False
         )
         results.append(
             {
