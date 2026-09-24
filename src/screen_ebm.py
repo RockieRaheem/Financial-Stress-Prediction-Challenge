@@ -18,6 +18,7 @@ from features import add_temporal_features
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "Data"
 ARTIFACT_DIR = ROOT / "artifacts"
+SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260924
@@ -41,6 +42,17 @@ def metrics(labels: np.ndarray, predictions: np.ndarray) -> dict[str, float]:
     }
 
 
+def preserve_mean(logits: np.ndarray, target_mean: float) -> np.ndarray:
+    low, high = -10.0, 10.0
+    for _ in range(80):
+        midpoint = (low + high) / 2.0
+        if expit(logits + midpoint).mean() < target_mean:
+            low = midpoint
+        else:
+            high = midpoint
+    return expit(logits + (low + high) / 2.0)
+
+
 def main() -> None:
     train = pd.read_csv(DATA_DIR / "Train.csv")
     test = pd.read_csv(DATA_DIR / "Test.csv")
@@ -54,6 +66,7 @@ def main() -> None:
     )
     categorical = set(featured.select_dtypes(exclude="number").columns)
     X = featured.iloc[: len(train)][selected].reset_index(drop=True)
+    X_test = featured.iloc[len(train) :][selected].reset_index(drop=True)
     feature_types = [
         "nominal" if feature in categorical else "continuous" for feature in selected
     ]
@@ -68,6 +81,7 @@ def main() -> None:
 
     folds = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
     oof = np.zeros(len(train), dtype=float)
+    test_predictions = np.zeros(len(test), dtype=float)
     fold_results = []
     for fold, (fit_index, valid_index) in enumerate(folds.split(X, y), start=1):
         model = ExplainableBoostingClassifier(
@@ -89,6 +103,7 @@ def main() -> None:
         model.fit(X.iloc[fit_index], y[fit_index])
         predictions = model.predict_proba(X.iloc[valid_index])[:, 1]
         oof[valid_index] = predictions
+        test_predictions += model.predict_proba(X_test)[:, 1] / N_SPLITS
         result = {"fold": fold, **metrics(y[valid_index], predictions)}
         fold_results.append(result)
         print(f"Fold {fold}: {result}", flush=True)
@@ -134,6 +149,44 @@ def main() -> None:
     pd.DataFrame(
         {ID_COLUMN: train[ID_COLUMN], TARGET: y, "prediction": oof}
     ).to_csv(ARTIFACT_DIR / "ebm_oof.csv", index=False)
+    (ARTIFACT_DIR / "ebm_screen.json").write_text(
+        json.dumps(report, indent=2), encoding="utf-8"
+    )
+    pd.DataFrame(
+        {ID_COLUMN: test[ID_COLUMN], "prediction": test_predictions}
+    ).to_csv(ARTIFACT_DIR / "ebm_test.csv", index=False)
+
+    public_anchor = pd.read_csv(
+        SUBMISSION_DIR / "quicktuned_realmlp_w100_keepmean.csv"
+    )
+    if public_anchor[ID_COLUMN].tolist() != test[ID_COLUMN].tolist():
+        raise ValueError("Public anchor identifiers are not aligned with test data")
+    anchor_target = public_anchor["Target"].to_numpy(dtype=float)
+    anchor_mean = float(anchor_target.mean())
+    test_anchor_logit = logit(np.clip(anchor_target, 1e-6, 1.0 - 1e-6))
+    test_ebm_logit = logit(np.clip(test_predictions, 1e-6, 1.0 - 1e-6))
+    output_files = []
+    for weight in [0.075, 0.1, 0.15, 0.2]:
+        blended_logit = (
+            (1.0 - weight) * test_anchor_logit + weight * test_ebm_logit
+        )
+        blended = preserve_mean(blended_logit, anchor_mean)
+        output = public_anchor.copy()
+        output["Target"] = np.clip(blended, 1e-6, 1.0 - 1e-6)
+        weight_label = str(int(weight * 1_000)).zfill(3)
+        filename = f"quickrealmlp_ebm_w{weight_label}_keepmean.csv"
+        output.to_csv(SUBMISSION_DIR / filename, index=False)
+        output_files.append(
+            {
+                "filename": filename,
+                "weight": weight,
+                "mean": float(output["Target"].mean()),
+                "standard_deviation": float(output["Target"].std()),
+            }
+        )
+    report["test_prediction_mean"] = float(test_predictions.mean())
+    report["public_anchor_mean"] = anchor_mean
+    report["output_files"] = output_files
     (ARTIFACT_DIR / "ebm_screen.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
