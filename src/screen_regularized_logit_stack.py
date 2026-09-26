@@ -63,7 +63,6 @@ def main() -> None:
                 StandardScaler(),
                 LogisticRegression(
                     C=regularization,
-                    penalty="l2",
                     solver="lbfgs",
                     max_iter=5_000,
                     random_state=SEED,
