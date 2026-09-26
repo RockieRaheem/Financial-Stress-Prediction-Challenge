@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pytabkit import RealMLP_TD_Classifier
+from pytabkit import MLP_PLR_D_Classifier, RealMLP_TD_Classifier
 from scipy.special import logit
 from sklearn.model_selection import StratifiedKFold
 
@@ -33,6 +33,9 @@ def main() -> None:
     parser.add_argument("--fold", type=int, default=1, choices=range(1, 6))
     parser.add_argument("--seed-offset", type=int, default=100)
     parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument(
+        "--architecture", choices=["realmlp", "mlp_plr"], default="realmlp"
+    )
     args = parser.parse_args()
 
     train = pd.read_csv(DATA_DIR / "Train.csv")
@@ -56,22 +59,34 @@ def main() -> None:
     medians = X.iloc[fit_index][selected].median()
     X.loc[:, selected] = X[selected].fillna(medians)
 
-    model = RealMLP_TD_Classifier(
-        device="cpu",
-        random_state=SEED + args.seed_offset + args.fold - 1,
-        n_cv=1,
-        n_refit=0,
-        n_threads=8,
-        verbosity=2,
-        val_metric_name="cross_entropy",
-        n_epochs=128,
-        batch_size=256,
-        use_ls=args.label_smoothing > 0.0,
-        ls_eps=args.label_smoothing,
-        use_early_stopping=True,
-        early_stopping_multiplicative_patience=1,
-        early_stopping_additive_patience=20,
-    )
+    common = {
+        "device": "cpu",
+        "random_state": SEED + args.seed_offset + args.fold - 1,
+        "n_cv": 1,
+        "n_refit": 0,
+        "n_threads": 8,
+        "verbosity": 2,
+        "val_metric_name": "cross_entropy",
+        "batch_size": 256,
+    }
+    if args.architecture == "realmlp":
+        model = RealMLP_TD_Classifier(
+            **common,
+            n_epochs=128,
+            use_ls=args.label_smoothing > 0.0,
+            ls_eps=args.label_smoothing,
+            use_early_stopping=True,
+            early_stopping_multiplicative_patience=1,
+            early_stopping_additive_patience=20,
+        )
+    else:
+        if args.label_smoothing != 0.0:
+            raise ValueError("Label smoothing is only supported for RealMLP here")
+        model = MLP_PLR_D_Classifier(
+            **common,
+            max_epochs=128,
+            es_patience=20,
+        )
     model.fit(
         X.iloc[fit_index],
         y[fit_index],
@@ -104,6 +119,7 @@ def main() -> None:
         "feature_count": args.features,
         "seed_offset": args.seed_offset,
         "label_smoothing": args.label_smoothing,
+        "architecture": args.architecture,
         "standalone": competition_metrics(y[valid_index], prediction),
         "anchor": anchor_metrics,
         "correlation": float(np.corrcoef(anchor, prediction)[0, 1]),
@@ -112,7 +128,8 @@ def main() -> None:
     }
     smoothing = str(int(round(args.label_smoothing * 1_000))).zfill(3)
     stem = (
-        f"realmlp_top{args.features}_fold{args.fold}_seed{args.seed_offset}"
+        f"{args.architecture}_top{args.features}_fold{args.fold}"
+        f"_seed{args.seed_offset}"
         f"_ls{smoothing}"
     )
     pd.DataFrame(
