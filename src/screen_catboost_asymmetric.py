@@ -25,6 +25,11 @@ ID_COLUMN = "ID"
 SEED = 20260826
 WEIGHTS = [0.0, 0.01, 0.025, 0.05, 0.075, 0.10, 0.15, 0.20, 0.30]
 CONFIGURATIONS = {
+    "ordered5": {
+        "boosting_type": "Ordered",
+        "grow_policy": "SymmetricTree",
+        "depth": 5,
+    },
     "lossguide31": {
         "grow_policy": "Lossguide",
         "depth": 8,
@@ -69,24 +74,30 @@ def main() -> None:
         StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED).split(X, y)
     )[args.fold - 1]
 
+    model_parameters = dict(CONFIGURATIONS[args.configuration])
+    boosting_type = model_parameters.pop("boosting_type", "Plain")
+    bootstrap_parameters = (
+        {"bootstrap_type": "Bayesian", "bagging_temperature": 0.5}
+        if boosting_type == "Ordered"
+        else {"bootstrap_type": "MVS", "subsample": 0.85}
+    )
     model = CatBoostClassifier(
         iterations=2_000,
         learning_rate=0.025,
         loss_function="Logloss",
         eval_metric="Logloss",
-        boosting_type="Plain",
+        boosting_type=boosting_type,
         random_seed=SEED + 500 + args.fold,
         l2_leaf_reg=10.0,
         random_strength=0.5,
         rsm=0.85,
-        bootstrap_type="MVS",
-        subsample=0.85,
         od_type="Iter",
         od_wait=150,
         allow_writing_files=False,
         verbose=200,
         thread_count=-1,
-        **CONFIGURATIONS[args.configuration],
+        **bootstrap_parameters,
+        **model_parameters,
     )
     model.fit(
         X.iloc[fit_index],
