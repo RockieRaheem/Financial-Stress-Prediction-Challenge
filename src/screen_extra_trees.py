@@ -7,11 +7,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.special import expit, logit
+from scipy.special import logit
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import StratifiedKFold
 
+from build_jointstress_ensemble import shift_to_mean
 from features import add_temporal_features
 from screen_ebm import competition_score, metrics
 from screen_sequence_residual import current_anchor_oof
@@ -23,7 +24,7 @@ ARTIFACT_DIR = ROOT / "artifacts"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260924
-BLEND_WEIGHTS = [0.025, 0.05, 0.075, 0.10, 0.15, 0.20, 0.30]
+BLEND_WEIGHTS = [0.01, 0.025, 0.05, 0.075, 0.10, 0.15, 0.20, 0.30]
 CONFIGURATIONS = [
     {
         "name": "top100_leaf10_sqrt",
@@ -70,7 +71,8 @@ def main() -> None:
     )
     anchor = current_anchor_oof()[valid_index]
     anchor_eta = logit(np.clip(anchor, 1e-6, 1.0 - 1e-6))
-    anchor_metrics = metrics(y[valid_index], anchor)
+    calibrated_anchor, _ = shift_to_mean(anchor_eta, 0.15)
+    anchor_metrics = metrics(y[valid_index], calibrated_anchor)
 
     results = []
     for configuration in CONFIGURATIONS:
@@ -84,7 +86,7 @@ def main() -> None:
             np.float32, copy=False
         )
         model = ExtraTreesClassifier(
-            n_estimators=600,
+            n_estimators=400,
             criterion="log_loss",
             max_features=configuration["max_features"],
             min_samples_leaf=int(configuration["min_samples_leaf"]),
@@ -99,8 +101,9 @@ def main() -> None:
         prediction_eta = logit(np.clip(prediction, 1e-6, 1.0 - 1e-6))
         blends = []
         for weight in BLEND_WEIGHTS:
-            blended = expit(
-                (1.0 - weight) * anchor_eta + weight * prediction_eta
+            blended, _ = shift_to_mean(
+                (1.0 - weight) * anchor_eta + weight * prediction_eta,
+                0.15,
             )
             blended_metrics = metrics(y[valid_index], blended)
             position_deltas = []
@@ -108,7 +111,9 @@ def main() -> None:
                 mask = valid_index % 4 == position
                 position_deltas.append(
                     competition_score(y[valid_index][mask], blended[mask])
-                    - competition_score(y[valid_index][mask], anchor[mask])
+                    - competition_score(
+                        y[valid_index][mask], calibrated_anchor[mask]
+                    )
                 )
             blends.append(
                 {
