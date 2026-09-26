@@ -1,4 +1,4 @@
-"""Fit the validated regularized stack and build conservative test blends."""
+"""Fit the validated expanded stack and build robust test blends."""
 
 from __future__ import annotations
 
@@ -25,12 +25,49 @@ SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260926
-REGULARIZATION = 0.10
-BLEND_WEIGHTS = [0.25, 0.50, 0.75, 1.00]
+REGULARIZATION = 0.30
+BLEND_WEIGHTS = [0.75, 1.00]
 COMPONENTS = {
     "catboost20": (
         ARTIFACT_DIR / "catboost_jointstress_ordered_20fold_oof.csv",
         SUBMISSION_DIR / "catboost_jointstress_ordered_20fold_100.csv",
+        "prediction",
+        "Target",
+    ),
+    "catboost_lowbag20": (
+        ARTIFACT_DIR / "catboost_jointstress_ordered_lowbag_20fold_oof.csv",
+        SUBMISSION_DIR / "catboost_jointstress_ordered_lowbag_20fold_100.csv",
+        "prediction",
+        "Target",
+    ),
+    "catboost_depth6": (
+        ARTIFACT_DIR / "catboost_jointstress_depth6_oof.csv",
+        SUBMISSION_DIR / "catboost_jointstress_depth6_100.csv",
+        "prediction",
+        "Target",
+    ),
+    "ordered_repeat": (
+        ARTIFACT_DIR / "repeated_ordered_ensemble_oof.csv",
+        SUBMISSION_DIR
+        / "highdata_jointstress_repeatordered_r050_cv075_full030_monolgb_logit_mean015.csv",
+        "prediction",
+        "Target",
+    ),
+    "monotonic_lgb": (
+        ARTIFACT_DIR / "lightgbm_jointstress_monotonic_oof.csv",
+        SUBMISSION_DIR / "lightgbm_jointstress_monotonic_100.csv",
+        "prediction",
+        "Target",
+    ),
+    "lowcapacity_lgb": (
+        ARTIFACT_DIR / "lightgbm_jointstress_monotonic_lowcapacity_oof.csv",
+        SUBMISSION_DIR / "lightgbm_jointstress_monotonic_lowcapacity_100.csv",
+        "prediction",
+        "Target",
+    ),
+    "xgboost": (
+        ARTIFACT_DIR / "xgboost_oof.csv",
+        SUBMISSION_DIR / "xgboost_temporal.csv",
         "prediction",
         "Target",
     ),
@@ -105,13 +142,18 @@ def main() -> None:
         StratifiedKFold(n_splits=10, shuffle=True, random_state=SEED).split(X_oof, y)
     )
     stack_oof = np.zeros(len(train), dtype=float)
+    fold_test_predictions = []
     for fit_index, valid_index in folds:
         model = make_model()
         model.fit(X_oof[fit_index], y[fit_index])
         stack_oof[valid_index] = model.predict_proba(X_oof[valid_index])[:, 1]
+        fold_test_predictions.append(model.predict_proba(X_test)[:, 1])
     full_model = make_model()
     full_model.fit(X_oof, y)
-    stack_test = full_model.predict_proba(X_test)[:, 1]
+    test_variants = {
+        "full": full_model.predict_proba(X_test)[:, 1],
+        "cvavg": np.mean(fold_test_predictions, axis=0),
+    }
 
     anchor_oof = current_anchor_oof()
     anchor_frame = pd.read_csv(
@@ -123,60 +165,68 @@ def main() -> None:
     anchor_oof_eta = logit(np.clip(anchor_oof, 1e-6, 1.0 - 1e-6))
     anchor_test_eta = logit(np.clip(anchor_test, 1e-6, 1.0 - 1e-6))
     stack_oof_eta = logit(np.clip(stack_oof, 1e-6, 1.0 - 1e-6))
-    stack_test_eta = logit(np.clip(stack_test, 1e-6, 1.0 - 1e-6))
     calibrated_anchor, _ = shift_to_mean(anchor_oof_eta, 0.15)
     anchor_metrics = competition_metrics(y, calibrated_anchor)
     test_mean = float(anchor_test.mean())
 
     candidates = []
-    for weight in BLEND_WEIGHTS:
-        oof_prediction, _ = shift_to_mean(
-            (1.0 - weight) * anchor_oof_eta + weight * stack_oof_eta, 0.15
-        )
-        test_prediction, _ = shift_to_mean(
-            (1.0 - weight) * anchor_test_eta + weight * stack_test_eta,
-            test_mean,
-        )
-        result_metrics = competition_metrics(y, oof_prediction)
-        fold_deltas = [
-            competition_metrics(y[index], oof_prediction[index])["competition_score"]
-            - competition_metrics(y[index], calibrated_anchor[index])[
-                "competition_score"
+    for test_variant, stack_test in test_variants.items():
+        stack_test_eta = logit(np.clip(stack_test, 1e-6, 1.0 - 1e-6))
+        for weight in BLEND_WEIGHTS:
+            oof_prediction, _ = shift_to_mean(
+                (1.0 - weight) * anchor_oof_eta + weight * stack_oof_eta, 0.15
+            )
+            test_prediction, _ = shift_to_mean(
+                (1.0 - weight) * anchor_test_eta + weight * stack_test_eta,
+                test_mean,
+            )
+            result_metrics = competition_metrics(y, oof_prediction)
+            fold_deltas = [
+                competition_metrics(y[index], oof_prediction[index])[
+                    "competition_score"
+                ]
+                - competition_metrics(y[index], calibrated_anchor[index])[
+                    "competition_score"
+                ]
+                for _, index in folds
             ]
-            for _, index in folds
-        ]
-        position_deltas = [
-            competition_metrics(y[index], oof_prediction[index])["competition_score"]
-            - competition_metrics(y[index], calibrated_anchor[index])[
-                "competition_score"
+            position_deltas = [
+                competition_metrics(y[index], oof_prediction[index])[
+                    "competition_score"
+                ]
+                - competition_metrics(y[index], calibrated_anchor[index])[
+                    "competition_score"
+                ]
+                for index in (np.arange(position, len(y), 4) for position in range(4))
             ]
-            for index in (np.arange(position, len(y), 4) for position in range(4))
-        ]
-        label = str(int(round(weight * 1_000))).zfill(4)
-        filename = f"regularized_stack_w{label}_keepmean.csv"
-        output = anchor_frame.copy()
-        output["Target"] = np.clip(test_prediction, 1e-6, 1.0 - 1e-6)
-        output_path = SUBMISSION_DIR / filename
-        output.to_csv(output_path, index=False)
-        candidates.append(
-            {
-                "filename": filename,
-                "weight": weight,
-                "metrics": result_metrics,
-                "gain": result_metrics["competition_score"]
-                - anchor_metrics["competition_score"],
-                "fold_deltas": fold_deltas,
-                "positive_fold_count": sum(delta > 0 for delta in fold_deltas),
-                "position_deltas": position_deltas,
-                "positive_position_count": sum(
-                    delta > 0 for delta in position_deltas
-                ),
-                "mean": float(output["Target"].mean()),
-                "minimum": float(output["Target"].min()),
-                "maximum": float(output["Target"].max()),
-                "sha256": hashlib.sha256(output_path.read_bytes()).hexdigest().upper(),
-            }
-        )
+            label = str(int(round(weight * 1_000))).zfill(4)
+            filename = f"expanded_stack_{test_variant}_w{label}_keepmean.csv"
+            output = anchor_frame.copy()
+            output["Target"] = np.clip(test_prediction, 1e-6, 1.0 - 1e-6)
+            output_path = SUBMISSION_DIR / filename
+            output.to_csv(output_path, index=False)
+            candidates.append(
+                {
+                    "filename": filename,
+                    "test_variant": test_variant,
+                    "weight": weight,
+                    "metrics": result_metrics,
+                    "gain": result_metrics["competition_score"]
+                    - anchor_metrics["competition_score"],
+                    "fold_deltas": fold_deltas,
+                    "positive_fold_count": sum(delta > 0 for delta in fold_deltas),
+                    "position_deltas": position_deltas,
+                    "positive_position_count": sum(
+                        delta > 0 for delta in position_deltas
+                    ),
+                    "mean": float(output["Target"].mean()),
+                    "minimum": float(output["Target"].min()),
+                    "maximum": float(output["Target"].max()),
+                    "sha256": hashlib.sha256(
+                        output_path.read_bytes()
+                    ).hexdigest().upper(),
+                }
+            )
 
     candidates.sort(key=lambda item: item["gain"], reverse=True)
     report = {
@@ -190,7 +240,7 @@ def main() -> None:
         "best": candidates[0],
         "candidates": candidates,
     }
-    (ARTIFACT_DIR / "regularized_stack_candidates.json").write_text(
+    (ARTIFACT_DIR / "expanded_stack_candidates.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
     print(json.dumps(report, indent=2), flush=True)
