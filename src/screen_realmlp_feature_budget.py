@@ -38,12 +38,15 @@ def main() -> None:
     parser.add_argument("--fold", type=int, default=1, choices=range(1, 6))
     parser.add_argument("--seed-offset", type=int, default=100)
     parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument("--max-epochs", type=int, default=None)
     parser.add_argument(
         "--architecture",
         choices=["realmlp", "mlp_plr", "resnet", "ft_transformer"],
         default="realmlp",
     )
     args = parser.parse_args()
+    if args.max_epochs is not None and args.max_epochs < 1:
+        raise ValueError("--max-epochs must be positive")
 
     train = pd.read_csv(DATA_DIR / "Train.csv")
     test = pd.read_csv(DATA_DIR / "Test.csv")
@@ -79,7 +82,7 @@ def main() -> None:
     if args.architecture == "realmlp":
         model = RealMLP_TD_Classifier(
             **common,
-            n_epochs=128,
+            n_epochs=args.max_epochs or 128,
             use_ls=args.label_smoothing > 0.0,
             ls_eps=args.label_smoothing,
             use_early_stopping=True,
@@ -91,7 +94,7 @@ def main() -> None:
             raise ValueError("Label smoothing is only supported for RealMLP here")
         model = MLP_PLR_D_Classifier(
             **common,
-            max_epochs=128,
+            max_epochs=args.max_epochs or 128,
             es_patience=20,
         )
     elif args.architecture == "resnet":
@@ -99,7 +102,7 @@ def main() -> None:
             raise ValueError("Label smoothing is only supported for RealMLP here")
         model = Resnet_RTDL_D_Classifier(
             **common,
-            max_epochs=128,
+            max_epochs=args.max_epochs or 128,
             es_patience=20,
         )
     else:
@@ -107,7 +110,7 @@ def main() -> None:
             raise ValueError("Label smoothing is only supported for RealMLP here")
         model = FTT_D_Classifier(
             **common,
-            max_epochs=96,
+            max_epochs=args.max_epochs or 96,
             es_patience=15,
         )
     model.fit(
@@ -143,6 +146,7 @@ def main() -> None:
         "seed_offset": args.seed_offset,
         "label_smoothing": args.label_smoothing,
         "architecture": args.architecture,
+        "max_epochs": args.max_epochs,
         "standalone": competition_metrics(y[valid_index], prediction),
         "anchor": anchor_metrics,
         "correlation": float(np.corrcoef(anchor, prediction)[0, 1]),
