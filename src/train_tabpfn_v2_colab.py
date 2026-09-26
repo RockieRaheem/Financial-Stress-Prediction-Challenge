@@ -37,6 +37,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-rows", type=int, default=10_000)
     parser.add_argument("--chunk-size", type=int, default=2_000)
     parser.add_argument("--blend-weight", type=float, default=0.10)
+    parser.add_argument(
+        "--anchor-file",
+        default="verified_probability_super_s300_keepmean.csv",
+        help="Submission filename used as the full-run blend anchor.",
+    )
     return parser.parse_args()
 
 
@@ -164,9 +169,10 @@ def full(args: argparse.Namespace) -> None:
         {ID_COLUMN: test[ID_COLUMN], "prediction": prediction}
     ).to_csv(raw_path, index=False)
 
-    anchor_frame = pd.read_csv(
-        SUBMISSION_DIR / "verified_portfolio_capacityebm_w100_keepmean.csv"
-    )
+    anchor_path = SUBMISSION_DIR / args.anchor_file
+    if not anchor_path.is_file():
+        raise FileNotFoundError(f"Blend anchor not found: {anchor_path}")
+    anchor_frame = pd.read_csv(anchor_path)
     if anchor_frame[ID_COLUMN].tolist() != test[ID_COLUMN].tolist():
         raise ValueError("Anchor identifiers are not aligned")
     anchor = anchor_frame["Target"].to_numpy(dtype=float)
@@ -188,6 +194,7 @@ def full(args: argparse.Namespace) -> None:
         "model_version": "TabPFN V2",
         "estimators": args.estimators,
         "context_rows_per_estimator": args.context_rows,
+        "anchor_file": args.anchor_file,
         "blend_weight": args.blend_weight,
         "prediction_mean": float(prediction.mean()),
         "output_mean": float(output["Target"].mean()),
