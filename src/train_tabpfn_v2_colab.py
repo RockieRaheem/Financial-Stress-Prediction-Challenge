@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--estimators", type=int, default=8)
     parser.add_argument("--context-rows", type=int, default=10_000)
     parser.add_argument("--chunk-size", type=int, default=2_000)
+    parser.add_argument("--screen-folds", type=int, default=2, choices=range(1, 6))
     parser.add_argument("--blend-weight", type=float, default=0.10)
     parser.add_argument(
         "--anchor-file",
@@ -94,12 +95,23 @@ def prepare_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, np.ndarray
 def screen(args: argparse.Namespace) -> None:
     train, _, X, _ = prepare_data()
     y = train[TARGET].to_numpy(dtype=int)
-    fit_index, valid_index = next(
+    folds = list(
         StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED).split(X, y)
     )
-    model = make_model(args, SEED)
-    model.fit(X.iloc[fit_index], y[fit_index])
-    prediction = predict_in_chunks(model, X.iloc[valid_index], args.chunk_size)
+    validation_indices = []
+    fold_predictions = []
+    for fold, (fit_index, valid_index) in enumerate(
+        folds[: args.screen_folds], start=1
+    ):
+        print(f"Screen fold {fold}/{args.screen_folds}", flush=True)
+        model = make_model(args, SEED + fold - 1)
+        model.fit(X.iloc[fit_index], y[fit_index])
+        fold_predictions.append(
+            predict_in_chunks(model, X.iloc[valid_index], args.chunk_size)
+        )
+        validation_indices.append(valid_index)
+    valid_index = np.concatenate(validation_indices)
+    prediction = np.concatenate(fold_predictions)
     anchor = current_anchor_oof()[valid_index]
     labels = y[valid_index]
     anchor_metrics = metrics(labels, anchor)
@@ -134,7 +146,8 @@ def screen(args: argparse.Namespace) -> None:
         "model_version": "TabPFN V2",
         "estimators": args.estimators,
         "context_rows_per_estimator": args.context_rows,
-        "fit_rows": len(fit_index),
+        "screen_folds": args.screen_folds,
+        "fit_rows_per_fold": len(folds[0][0]),
         "validation_rows": len(valid_index),
         "anchor_metrics": anchor_metrics,
         "standalone_metrics": metrics(labels, prediction),
