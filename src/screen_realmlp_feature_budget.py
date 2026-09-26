@@ -32,6 +32,7 @@ def main() -> None:
     parser.add_argument("--features", type=int, default=50)
     parser.add_argument("--fold", type=int, default=1, choices=range(1, 6))
     parser.add_argument("--seed-offset", type=int, default=100)
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
     args = parser.parse_args()
 
     train = pd.read_csv(DATA_DIR / "Train.csv")
@@ -65,7 +66,8 @@ def main() -> None:
         val_metric_name="cross_entropy",
         n_epochs=128,
         batch_size=256,
-        use_ls=False,
+        use_ls=args.label_smoothing > 0.0,
+        ls_eps=args.label_smoothing,
         use_early_stopping=True,
         early_stopping_multiplicative_patience=1,
         early_stopping_additive_patience=20,
@@ -101,13 +103,18 @@ def main() -> None:
         "fold": args.fold,
         "feature_count": args.features,
         "seed_offset": args.seed_offset,
+        "label_smoothing": args.label_smoothing,
         "standalone": competition_metrics(y[valid_index], prediction),
         "anchor": anchor_metrics,
         "correlation": float(np.corrcoef(anchor, prediction)[0, 1]),
         "best_blend": max(blends, key=lambda item: item["competition_score"]),
         "blends": blends,
     }
-    stem = f"realmlp_top{args.features}_fold{args.fold}_seed{args.seed_offset}"
+    smoothing = str(int(round(args.label_smoothing * 1_000))).zfill(3)
+    stem = (
+        f"realmlp_top{args.features}_fold{args.fold}_seed{args.seed_offset}"
+        f"_ls{smoothing}"
+    )
     pd.DataFrame(
         {
             ID_COLUMN: train.iloc[valid_index][ID_COLUMN].to_numpy(),
