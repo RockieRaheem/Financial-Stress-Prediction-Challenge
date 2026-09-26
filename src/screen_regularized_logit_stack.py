@@ -25,6 +25,12 @@ ID_COLUMN = "ID"
 SEED = 20260926
 COMPONENTS = {
     "catboost20": "catboost_jointstress_ordered_20fold_oof.csv",
+    "catboost_lowbag20": "catboost_jointstress_ordered_lowbag_20fold_oof.csv",
+    "catboost_depth6": "catboost_jointstress_depth6_oof.csv",
+    "ordered_repeat": "repeated_ordered_ensemble_oof.csv",
+    "monotonic_lgb": "lightgbm_jointstress_monotonic_oof.csv",
+    "lowcapacity_lgb": "lightgbm_jointstress_monotonic_lowcapacity_oof.csv",
+    "xgboost": "xgboost_oof.csv",
     "realmlp": "realmlp_5fold_oof.csv",
     "ebm": "ebm_oof.csv",
     "third": "third_ordered_ensemble_oof.csv",
