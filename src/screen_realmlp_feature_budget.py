@@ -8,7 +8,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pytabkit import MLP_PLR_D_Classifier, RealMLP_TD_Classifier
+from pytabkit import (
+    MLP_PLR_D_Classifier,
+    RealMLP_TD_Classifier,
+    Resnet_RTDL_D_Classifier,
+)
 from scipy.special import logit
 from sklearn.model_selection import StratifiedKFold
 
@@ -34,7 +38,9 @@ def main() -> None:
     parser.add_argument("--seed-offset", type=int, default=100)
     parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument(
-        "--architecture", choices=["realmlp", "mlp_plr"], default="realmlp"
+        "--architecture",
+        choices=["realmlp", "mlp_plr", "resnet"],
+        default="realmlp",
     )
     args = parser.parse_args()
 
@@ -79,10 +85,18 @@ def main() -> None:
             early_stopping_multiplicative_patience=1,
             early_stopping_additive_patience=20,
         )
-    else:
+    elif args.architecture == "mlp_plr":
         if args.label_smoothing != 0.0:
             raise ValueError("Label smoothing is only supported for RealMLP here")
         model = MLP_PLR_D_Classifier(
+            **common,
+            max_epochs=128,
+            es_patience=20,
+        )
+    else:
+        if args.label_smoothing != 0.0:
+            raise ValueError("Label smoothing is only supported for RealMLP here")
+        model = Resnet_RTDL_D_Classifier(
             **common,
             max_epochs=128,
             es_patience=20,
