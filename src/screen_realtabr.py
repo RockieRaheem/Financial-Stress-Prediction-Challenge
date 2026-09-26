@@ -14,6 +14,7 @@ from sklearn.model_selection import StratifiedKFold
 
 from build_jointstress_ensemble import competition_metrics, shift_to_mean
 from features import add_temporal_features
+from screen_sequence_residual import current_anchor_oof
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,7 @@ TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260826
 FEATURE_COUNT = 50
-BLEND_WEIGHTS = [0.0, 0.03, 0.05, 0.075, 0.10, 0.15, 0.20]
+BLEND_WEIGHTS = [0.0, 0.01, 0.02, 0.03, 0.05, 0.075, 0.10, 0.15, 0.20]
 
 
 def main() -> None:
@@ -59,7 +60,7 @@ def main() -> None:
         n_threads=8,
         verbosity=2,
         n_epochs=100,
-        patience=12,
+        patience=4,
         context_size=64,
         eval_batch_size=1024,
         val_metric_name="cross_entropy",
@@ -72,12 +73,11 @@ def main() -> None:
         y_val=labels[valid_index],
     )
     predictions = model.predict_proba(features.iloc[valid_index])[:, 1]
-    anchor_frame = pd.read_csv(ARTIFACT_DIR / "third_ordered_ensemble_oof.csv")
-    assert train[ID_COLUMN].tolist() == anchor_frame[ID_COLUMN].tolist()
-    anchor = anchor_frame.loc[valid_index, "prediction"].to_numpy()
-    anchor_metrics = competition_metrics(labels[valid_index], anchor)
+    anchor = current_anchor_oof()[valid_index]
     anchor_logits = logit(np.clip(anchor, 1e-6, 1 - 1e-6))
     candidate_logits = logit(np.clip(predictions, 1e-6, 1 - 1e-6))
+    calibrated_anchor, _ = shift_to_mean(anchor_logits, 0.15)
+    anchor_metrics = competition_metrics(labels[valid_index], calibrated_anchor)
     blend_results = []
     for weight in BLEND_WEIGHTS:
         blended, _ = shift_to_mean(
