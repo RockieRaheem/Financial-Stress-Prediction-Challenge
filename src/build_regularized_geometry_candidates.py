@@ -171,6 +171,59 @@ def main() -> None:
                 }
             )
 
+    base_scale = 0.875
+    base_prediction, _ = shift_to_mean(
+        anchor_eta + base_scale * (regularized_eta - anchor_eta),
+        float(labels.mean()),
+    )
+    base_test_prediction, _ = shift_to_mean(
+        anchor_test_eta + base_scale * (regularized_test_eta - anchor_test_eta),
+        test_mean,
+    )
+    for temperature in [0.98, 0.99, 1.003, 1.006, 1.01, 1.02]:
+        prediction, _ = shift_to_mean(
+            temperature * logit(np.clip(base_prediction, 1e-6, 1.0 - 1e-6)),
+            float(labels.mean()),
+        )
+        test_prediction, _ = shift_to_mean(
+            temperature
+            * logit(np.clip(base_test_prediction, 1e-6, 1.0 - 1e-6)),
+            test_mean,
+        )
+        metrics = competition_metrics(labels, prediction)
+        fold_deltas = [
+            competition_metrics(labels[index], prediction[index])[
+                "competition_score"
+            ]
+            - competition_metrics(labels[index], calibrated_anchor[index])[
+                "competition_score"
+            ]
+            for _, index in folds
+        ]
+        temperature_label = str(int(round(temperature * 1_000))).zfill(4)
+        filename = (
+            f"regularized_logit_s0875_temp{temperature_label}_keepmean.csv"
+        )
+        output = anchor_test_frame.copy()
+        output["Target"] = np.clip(test_prediction, 1e-6, 1.0 - 1e-6)
+        output_path = SUBMISSION_DIR / filename
+        output.to_csv(output_path, index=False)
+        candidates.append(
+            {
+                "filename": filename,
+                "geometry": "logit_temperature",
+                "scale": base_scale,
+                "temperature": temperature,
+                "metrics": metrics,
+                "gain": metrics["competition_score"]
+                - anchor_metrics["competition_score"],
+                "positive_fold_count": sum(delta > 0 for delta in fold_deltas),
+                "fold_deltas": fold_deltas,
+                "mean": float(output["Target"].mean()),
+                "sha256": hashlib.sha256(output_path.read_bytes()).hexdigest().upper(),
+            }
+        )
+
     candidates.sort(key=lambda item: item["gain"], reverse=True)
     report = {
         "anchor_metrics": anchor_metrics,
