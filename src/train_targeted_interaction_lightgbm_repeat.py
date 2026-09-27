@@ -1,4 +1,4 @@
-"""Repeat targeted LightGBM folds and build a lower-variance refinement."""
+"""Add a third targeted LightGBM seed and build a lower-variance refinement."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ ARTIFACT_DIR = ROOT / "artifacts"
 SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
-SEED = 20261031
+SEED = 20261207
 N_SPLITS = 5
 WEIGHTS = [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20]
 
@@ -49,8 +49,8 @@ def main() -> None:
     x_test[categorical] = x_test[categorical].astype("category")
 
     folds = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
-    repeat_oof = np.zeros(len(train), dtype=float)
-    repeat_test = np.zeros(len(test), dtype=float)
+    third_oof = np.zeros(len(train), dtype=float)
+    third_test = np.zeros(len(test), dtype=float)
     fold_results = []
     for fold, (fit_index, valid_index) in enumerate(
         folds.split(x_train, labels), start=1
@@ -81,14 +81,14 @@ def main() -> None:
                 lgb.log_evaluation(250),
             ],
         )
-        repeat_oof[valid_index] = model.predict_proba(x_train.iloc[valid_index])[:, 1]
-        repeat_test += model.predict_proba(x_test)[:, 1] / N_SPLITS
+        third_oof[valid_index] = model.predict_proba(x_train.iloc[valid_index])[:, 1]
+        third_test += model.predict_proba(x_test)[:, 1] / N_SPLITS
         fold_results.append(
             {
                 "fold": fold,
                 "best_iteration": int(model.best_iteration_),
                 "metrics": competition_metrics(
-                    labels[valid_index], repeat_oof[valid_index]
+                    labels[valid_index], third_oof[valid_index]
                 ),
             }
         )
@@ -100,14 +100,20 @@ def main() -> None:
     original_test = pd.read_csv(
         ARTIFACT_DIR / "targeted_interaction_lightgbm_test.csv"
     )["prediction"].to_numpy(float)
-    averaged_oof = 0.5 * original_oof + 0.5 * repeat_oof
-    averaged_test = 0.5 * original_test + 0.5 * repeat_test
+    repeat_oof = pd.read_csv(
+        ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_oof.csv"
+    )["prediction"].to_numpy(float)
+    repeat_test = pd.read_csv(
+        ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_test.csv"
+    )["prediction"].to_numpy(float)
+    averaged_oof = (original_oof + repeat_oof + third_oof) / 3.0
+    averaged_test = (original_test + repeat_test + third_test) / 3.0
     pd.DataFrame(
-        {ID_COLUMN: train[ID_COLUMN], TARGET: labels, "prediction": repeat_oof}
-    ).to_csv(ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_oof.csv", index=False)
+        {ID_COLUMN: train[ID_COLUMN], TARGET: labels, "prediction": third_oof}
+    ).to_csv(ARTIFACT_DIR / "targeted_interaction_lightgbm_third_oof.csv", index=False)
     pd.DataFrame(
-        {ID_COLUMN: test[ID_COLUMN], "prediction": repeat_test}
-    ).to_csv(ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_test.csv", index=False)
+        {ID_COLUMN: test[ID_COLUMN], "prediction": third_test}
+    ).to_csv(ARTIFACT_DIR / "targeted_interaction_lightgbm_third_test.csv", index=False)
 
     stack_oof = reconstruct_stack_oof(train, labels)
     cat_oof = pd.read_csv(ARTIFACT_DIR / "targeted_interaction_catboost_oof.csv")[
@@ -143,7 +149,7 @@ def main() -> None:
         )
         metrics = competition_metrics(labels, prediction)
         label = str(int(round(weight * 1_000))).zfill(4)
-        filename = f"targeted_lgb_repeat_refine_w{label}_keepmean.csv"
+        filename = f"targeted_lgb_triple_refine_w{label}_keepmean.csv"
         output = sample.copy()
         output["Target"] = np.clip(output_prediction, 1e-6, 1 - 1e-6)
         output_path = SUBMISSION_DIR / filename
@@ -167,13 +173,16 @@ def main() -> None:
         "fold_results": fold_results,
         "original_metrics": competition_metrics(labels, original_oof),
         "repeat_metrics": competition_metrics(labels, repeat_oof),
+        "third_metrics": competition_metrics(labels, third_oof),
         "averaged_metrics": competition_metrics(labels, averaged_oof),
-        "repeat_correlation": float(np.corrcoef(original_oof, repeat_oof)[0, 1]),
+        "pairwise_correlations": np.corrcoef(
+            np.column_stack([original_oof, repeat_oof, third_oof]), rowvar=False
+        ).tolist(),
         "anchor_metrics": anchor_metrics,
         "best": candidates[0],
         "candidates": candidates,
     }
-    (ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_metrics.json").write_text(
+    (ARTIFACT_DIR / "targeted_interaction_lightgbm_triple_metrics.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
     print(json.dumps(report, indent=2), flush=True)

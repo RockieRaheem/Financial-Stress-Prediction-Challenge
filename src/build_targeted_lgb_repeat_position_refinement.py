@@ -1,4 +1,4 @@
-"""Jointly tune repeated LightGBM refinement and snapshot-position calibration."""
+"""Jointly tune triple-bagged LightGBM and snapshot-position calibration."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ ARTIFACT_DIR = ROOT / "artifacts"
 SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
-LGB_WEIGHTS = [0.10, 0.125, 0.15, 0.175]
+LGB_WEIGHTS = [0.125, 0.15, 0.175, 0.20, 0.225]
 POSITION_STRENGTHS = [0.50, 0.75, 1.00]
 
 
@@ -42,7 +42,10 @@ def main() -> None:
     repeat_lgb_oof = pd.read_csv(
         ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_oof.csv"
     )["prediction"].to_numpy(float)
-    averaged_lgb_oof = 0.5 * original_lgb_oof + 0.5 * repeat_lgb_oof
+    third_lgb_oof = pd.read_csv(
+        ARTIFACT_DIR / "targeted_interaction_lightgbm_third_oof.csv"
+    )["prediction"].to_numpy(float)
+    averaged_lgb_oof = (original_lgb_oof + repeat_lgb_oof + third_lgb_oof) / 3.0
 
     anchor_eta = 0.875 * logit(np.clip(stack_oof, 1e-6, 1 - 1e-6)) + 0.125 * logit(
         np.clip(cat_oof, 1e-6, 1 - 1e-6)
@@ -60,7 +63,10 @@ def main() -> None:
     repeat_lgb_test = pd.read_csv(
         ARTIFACT_DIR / "targeted_interaction_lightgbm_repeat_test.csv"
     )["prediction"].to_numpy(float)
-    averaged_lgb_test = 0.5 * original_lgb_test + 0.5 * repeat_lgb_test
+    third_lgb_test = pd.read_csv(
+        ARTIFACT_DIR / "targeted_interaction_lightgbm_third_test.csv"
+    )["prediction"].to_numpy(float)
+    averaged_lgb_test = (original_lgb_test + repeat_lgb_test + third_lgb_test) / 3.0
     if public_anchor[ID_COLUMN].tolist() != test[ID_COLUMN].tolist():
         raise ValueError("Public anchor identifiers are not aligned")
     public_anchor_eta = logit(
@@ -84,7 +90,7 @@ def main() -> None:
             weight_label = str(int(round(weight * 1_000))).zfill(4)
             strength_label = str(int(round(strength * 1_000))).zfill(4)
             filename = (
-                f"targeted_lgb_repeat_w{weight_label}_position_s{strength_label}"
+                f"targeted_lgb_triple_w{weight_label}_position_s{strength_label}"
                 "_keepmean.csv"
             )
             output = sample.copy()
@@ -120,7 +126,7 @@ def main() -> None:
         "best": candidates[0],
         "candidates": candidates,
     }
-    (ARTIFACT_DIR / "targeted_lgb_repeat_position_refinement.json").write_text(
+    (ARTIFACT_DIR / "targeted_lgb_triple_position_refinement.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
     print(json.dumps(report, indent=2), flush=True)
