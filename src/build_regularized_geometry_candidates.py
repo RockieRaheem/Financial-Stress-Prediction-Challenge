@@ -26,6 +26,16 @@ SUBMISSION_DIR = ROOT / "submissions"
 TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260926
+PROFILE_COLUMNS = [
+    "arpu",
+    "age",
+    "gender",
+    "region",
+    "smartphone",
+    "segment",
+    "earning_pattern",
+    "x_90_d_activity_rate",
+]
 COMPONENTS = [
     "catboost_jointstress_ordered_20fold_oof.csv",
     "realmlp_5fold_oof.csv",
@@ -49,8 +59,10 @@ def make_model() -> object:
 
 
 def main() -> None:
-    train = pd.read_csv(DATA_DIR / "Train.csv", usecols=[ID_COLUMN, TARGET])
-    test = pd.read_csv(DATA_DIR / "Test.csv", usecols=[ID_COLUMN])
+    train = pd.read_csv(
+        DATA_DIR / "Train.csv", usecols=[ID_COLUMN, TARGET, *PROFILE_COLUMNS]
+    )
+    test = pd.read_csv(DATA_DIR / "Test.csv", usecols=[ID_COLUMN, *PROFILE_COLUMNS])
     labels = train[TARGET].to_numpy(dtype=int)
     matrix = []
     for filename in COMPONENTS:
@@ -214,6 +226,62 @@ def main() -> None:
                 "geometry": "logit_temperature",
                 "scale": base_scale,
                 "temperature": temperature,
+                "metrics": metrics,
+                "gain": metrics["competition_score"]
+                - anchor_metrics["competition_score"],
+                "positive_fold_count": sum(delta > 0 for delta in fold_deltas),
+                "fold_deltas": fold_deltas,
+                "mean": float(output["Target"].mean()),
+                "sha256": hashlib.sha256(output_path.read_bytes()).hexdigest().upper(),
+            }
+        )
+
+    combined_profiles = pd.concat(
+        [train[PROFILE_COLUMNS], test[PROFILE_COLUMNS]], ignore_index=True
+    )
+    profile_index = pd.MultiIndex.from_frame(combined_profiles)
+    profile_codes, unique_profiles = pd.factorize(profile_index, sort=False)
+    if len(unique_profiles) != 10_000:
+        raise ValueError("Expected exactly 10,000 latent customer profiles")
+    train_codes = profile_codes[: len(train)]
+    test_codes = profile_codes[len(train) :]
+    base_eta = logit(np.clip(base_prediction, 1e-6, 1.0 - 1e-6))
+    base_test_eta = logit(
+        np.clip(base_test_prediction, 1e-6, 1.0 - 1e-6)
+    )
+    group_eta = pd.Series(base_eta).groupby(train_codes).transform("mean").to_numpy()
+    group_test_eta = (
+        pd.Series(base_test_eta).groupby(test_codes).transform("mean").to_numpy()
+    )
+    for contrast in [-0.50, -0.30, -0.20, -0.10, 0.10, 0.20, 0.30, 0.50, 1.00]:
+        prediction, _ = shift_to_mean(
+            base_eta + contrast * (base_eta - group_eta), float(labels.mean())
+        )
+        test_prediction, _ = shift_to_mean(
+            base_test_eta + contrast * (base_test_eta - group_test_eta), test_mean
+        )
+        metrics = competition_metrics(labels, prediction)
+        fold_deltas = [
+            competition_metrics(labels[index], prediction[index])[
+                "competition_score"
+            ]
+            - competition_metrics(labels[index], calibrated_anchor[index])[
+                "competition_score"
+            ]
+            for _, index in folds
+        ]
+        contrast_label = f"m{abs(int(round(contrast * 1_000))):04d}" if contrast < 0 else f"p{int(round(contrast * 1_000)):04d}"
+        filename = f"regularized_customercontrast_{contrast_label}_keepmean.csv"
+        output = anchor_test_frame.copy()
+        output["Target"] = np.clip(test_prediction, 1e-6, 1.0 - 1e-6)
+        output_path = SUBMISSION_DIR / filename
+        output.to_csv(output_path, index=False)
+        candidates.append(
+            {
+                "filename": filename,
+                "geometry": "customer_contrast",
+                "scale": base_scale,
+                "contrast": contrast,
                 "metrics": metrics,
                 "gain": metrics["competition_score"]
                 - anchor_metrics["competition_score"],
