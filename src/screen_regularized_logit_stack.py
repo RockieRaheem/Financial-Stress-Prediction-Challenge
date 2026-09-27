@@ -36,6 +36,7 @@ COMPONENTS = {
     "third": "third_ordered_ensemble_oof.csv",
     "capacity_ebm": "ebm_top200_interactions50_leaves3_oof.csv",
     "super": "super_ensemble_oof.csv",
+    "peer_context": "peer_context_catboost_oof.csv",
 }
 REGULARIZATION = [0.001, 0.003, 0.01, 0.03, 0.10, 0.30, 1.0]
 
