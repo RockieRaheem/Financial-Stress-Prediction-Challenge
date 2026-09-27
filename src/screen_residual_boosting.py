@@ -13,6 +13,8 @@ from sklearn.model_selection import StratifiedKFold
 
 from build_jointstress_ensemble import competition_metrics, shift_to_mean
 from build_monotonic_jointstress_ensemble import position_metrics
+from build_targeted_customer_history_refinement import reconstruct_stack_oof
+from build_targeted_position_calibration import apply_position_strength
 from features import add_temporal_features
 
 
@@ -24,11 +26,9 @@ TARGET = "liquidity_stress_next_30d"
 ID_COLUMN = "ID"
 SEED = 20260901
 N_SPLITS = 5
-EXPECTED_PREVALENCE = 0.15
 CORRECTION_SCALES = [0.0, 0.25, 0.5, 0.75, 1.0]
-ANCHOR_OOF = ARTIFACT_DIR / "highdata_jointstress_monolgb_oof.csv"
 ANCHOR_TEST = (
-    SUBMISSION_DIR / "highdata_jointstress_monolgb_w100_cv075_full030_logit_mean015.csv"
+    SUBMISSION_DIR / "targeted_lgb_triple_w0175_position_s1000_keepmean.csv"
 )
 
 
@@ -36,14 +36,36 @@ def main() -> None:
     train = pd.read_csv(DATA_DIR / "Train.csv")
     test = pd.read_csv(DATA_DIR / "Test.csv")
     sample = pd.read_csv(DATA_DIR / "SampleSubmission.csv")
-    anchor_oof_frame = pd.read_csv(ANCHOR_OOF)
     anchor_test_frame = pd.read_csv(ANCHOR_TEST)
-    assert train[ID_COLUMN].tolist() == anchor_oof_frame[ID_COLUMN].tolist()
     assert test[ID_COLUMN].tolist() == anchor_test_frame[ID_COLUMN].tolist()
     assert test[ID_COLUMN].tolist() == sample[ID_COLUMN].tolist()
 
     labels = train[TARGET].to_numpy(dtype=int)
-    anchor_oof = anchor_oof_frame["prediction"].to_numpy()
+    prevalence = float(labels.mean())
+    stack_oof = reconstruct_stack_oof(train, labels)
+    cat_oof = pd.read_csv(ARTIFACT_DIR / "targeted_interaction_catboost_oof.csv")[
+        "prediction"
+    ].to_numpy(float)
+    lgb_oof = np.mean(
+        [
+            pd.read_csv(ARTIFACT_DIR / filename)["prediction"].to_numpy(float)
+            for filename in (
+                "targeted_interaction_lightgbm_oof.csv",
+                "targeted_interaction_lightgbm_repeat_oof.csv",
+                "targeted_interaction_lightgbm_third_oof.csv",
+            )
+        ],
+        axis=0,
+    )
+    targeted_eta = 0.875 * logit(np.clip(stack_oof, 1e-6, 1 - 1e-6)) + 0.125 * logit(
+        np.clip(cat_oof, 1e-6, 1 - 1e-6)
+    )
+    combined_eta = 0.825 * targeted_eta + 0.175 * logit(
+        np.clip(lgb_oof, 1e-6, 1 - 1e-6)
+    )
+    anchor_oof, _ = apply_position_strength(
+        combined_eta, 4, prevalence, 1.0
+    )
     anchor_test = anchor_test_frame["Target"].to_numpy()
     anchor_oof_eta = logit(np.clip(anchor_oof, 1e-6, 1 - 1e-6))
     anchor_test_eta = logit(np.clip(anchor_test, 1e-6, 1 - 1e-6))
@@ -171,7 +193,7 @@ def main() -> None:
         scale_predictions = {}
         for scale in CORRECTION_SCALES:
             predictions, shift = shift_to_mean(
-                anchor_oof_eta + scale * correction_oof, EXPECTED_PREVALENCE
+                anchor_oof_eta + scale * correction_oof, prevalence
             )
             metrics = competition_metrics(labels, predictions)
             positions = position_metrics(labels, predictions, 4)
@@ -223,9 +245,9 @@ def main() -> None:
     best_scale = float(results[best_name]["best_scale"])
     best_test_predictions, test_shift = shift_to_mean(
         anchor_test_eta + best_scale * fitted[best_name]["correction_test"],
-        EXPECTED_PREVALENCE,
+        float(anchor_test.mean()),
     )
-    filename = f"highdata_jointstress_residual_{best_name}_s{int(100 * best_scale):03d}_mean015.csv"
+    filename = f"targeted_triple_residual_{best_name}_s{int(100 * best_scale):03d}_keepmean.csv"
     submission = sample.copy()
     submission["Target"] = np.clip(best_test_predictions, 1e-6, 1 - 1e-6)
     assert np.isfinite(submission["Target"]).all()
